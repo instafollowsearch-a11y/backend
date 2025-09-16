@@ -163,6 +163,15 @@ const migrations = [
         ADD COLUMN IF NOT EXISTS lock_until TIMESTAMP DEFAULT NULL;
       `);
     }
+  },
+  {
+    name: '008_remove_username_unique_constraint',
+    up: async () => {
+      await sequelize.query(`
+        ALTER TABLE users 
+        DROP CONSTRAINT IF EXISTS users_username_key;
+      `);
+    }
   }
 ];
 

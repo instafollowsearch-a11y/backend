@@ -20,17 +20,14 @@ export const register = async (req, res, next) => {
     // Check if user already exists
     const existingUser = await User.findOne({
       where: {
-        [Op.or]: [
-          { email },
-          { username }
-        ]
+          email,
       }
     });
 
     if (existingUser) {
       return res.status(400).json({
         success: false,
-        error: 'User already exists with this email or username'
+        error: 'User already exists with this email'
       });
     }
 

@@ -20,8 +20,8 @@ export const createCheckoutSession = async (userId, priceId) => {
           quantity: 1,
         },
       ],
-      success_url: `${process.env.FRONTEND_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL}/payment/cancel`,
+      success_url: `${process.env.FRONTEND_URL}/successfulpayment?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL}/paymentfailed`,
       customer: userId,
       client_reference_id: userId,
       metadata: {
