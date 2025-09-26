@@ -1,5 +1,5 @@
 import InstagramCache from "../models/InstagramCache.js";
-import { getUserInfo, getFollowers, getFollowing, getUserStories, updateCache, generateRandomNewUsers, findNewUsers, analyzeRedFlags, getPostLikers, getPostComments, getNextFollowersData, getNextFollowingData, fetchUserMedias } from "./utils/hikerHelperFunctions.js";
+import { getUserInfo, getFollowers, getFollowing, getUserStories, updateCache, findNewUsers, getPostLikers, getPostComments, getNextFollowersData, getNextFollowingData, fetchUserMedias, fetchMoreUserMedias } from "./utils/hikerHelperFunctions.js";
 
 export const getRecentActivity = async (username, userSubscription = 'free') => {
   const startTime = Date.now();
@@ -38,7 +38,7 @@ export const getRecentActivity = async (username, userSubscription = 'free') => 
     const newFollowing = findNewUsers(following, previousFollowing);
 
     const userPostsData = await Promise.all(
-      userPosts.map(async (post) => {
+      userPosts?.medias?.map(async (post) => {
         const likers = await getPostLikers(post.id); // returns array of user objects
         return { post, likers };
       })
@@ -127,7 +127,7 @@ export const getAdvancedActivity = async (username, userSubscription = 'free') =
     });
 
     const userPostsData = await Promise.all(
-      userPosts.map(async (post) => {
+      userPosts?.medias?.map(async (post) => {
         const likers = await getPostLikers(post.id); // returns array of user objects
         return { post, likers };
       })
@@ -232,7 +232,7 @@ export const getSharedActivity = async (username1, username2) => {
     // Fetch likers + comments for both users' posts in one Promise.all
     const [firstUserPostData, secondUserPostData] = await Promise.all([
       Promise.all(
-        firstUserPosts.map(async (post) => {
+        firstUserPosts?.medias?.map(async (post) => {
           const [likers, comments] = await Promise.all([
             getPostLikers(post.id),
             getPostComments(post.id),
@@ -241,7 +241,7 @@ export const getSharedActivity = async (username1, username2) => {
         })
       ),
       Promise.all(
-        secondUserPosts.map(async (post) => {
+        secondUserPosts?.medias?.map(async (post) => {
           const [likers, comments] = await Promise.all([
             getPostLikers(post.id),
             getPostComments(post.id),
@@ -340,6 +340,94 @@ export const getSharedActivity = async (username1, username2) => {
   }
 };
 
+export const getInstagramAdmirers = async (username) => {
+  const startTime = Date.now();
+  try {
+    // Step 1: Get user info
+    const userinfo = await getUserInfo(username);
+    const userId = userinfo.id || userinfo.pk;
+
+    // Step 2: Get recent posts
+    const userPosts = await fetchUserMedias(userId, 48);
+
+    // Step 3: Get likers for each post
+    const postsWithLikers = await Promise.all(
+      userPosts?.medias?.map(async (post) => {
+        const likers = await getPostLikers(post.id);
+        return { post, likers };
+      })
+    );
+
+    // Step 4: Count likes per user across all posts
+    const likerCounts = {}; // { userId: { count, username, profilePicUrl } }
+
+    postsWithLikers.forEach(({ likers }) => {
+      likers.forEach((liker) => {
+        if (!likerCounts[liker.pk]) {
+          likerCounts[liker.pk] = {
+            id: liker.pk,
+            username: liker.username,
+            profilePicUrl: liker.profile_pic_url,
+            count: 0,
+          };
+        }
+        likerCounts[liker.pk].count++;
+      });
+    });
+
+    // Step 5: Convert counts to percentage
+    const totalPosts = userPosts.length;
+    let admirers = Object.values(likerCounts).map((liker) => ({
+      id: liker.id,
+      username: liker.username,
+      profilePicUrl: liker.profilePicUrl,
+      likePercentage: Math.round((liker.count / totalPosts) * 100),
+    }));
+
+    // Step 6: Sort & rank
+    admirers = admirers
+      .sort((a, b) => b.likePercentage - a.likePercentage || a.username.localeCompare(b.username))
+      .map((item, idx) => ({ ...item, rank: idx + 1 }));
+
+    return {
+      success: true,
+      userinfo,
+      admirers,
+      processingTime: Date.now() - startTime,
+    };
+  } catch (error) {
+    console.error("Error getting admirers:", error.message);
+    throw error;
+  }
+};
+
+export const getInstagramProfileDetails = async (username) => {
+
+  try {
+    const userinfo = await getUserInfo(username);
+    const userId = userinfo.id || userinfo.pk;
+    const [userPosts, userStories, userFollowers, userFollowing] = await Promise.all([
+      fetchUserMedias(userId, 24),
+      getUserStories({ userId }),
+      getFollowers({ userId, fetchOnce: true }),
+      getFollowing({ userId, fetchOnce: true })
+    ]);
+
+    return {
+      success: true,
+      userinfo,
+      userPosts,
+      userStories,
+      userFollowers,
+      userFollowing,
+    };
+  } catch (error) {
+    console.error("Error getting profile details:", error.message);
+    throw error;
+  }
+};
+
+
 export const getNextFollowers = async (userId, nextPageId) => {
   try {
     const data = await getNextFollowersData({ userId, nextPageId })
@@ -355,6 +443,15 @@ export const getNextFollowing = async (userId, nextPageId) => {
     return data
   } catch (error) {
     console.error("Error getting next following:", error.message);
+    throw error;
+  }
+};
+export const getNextMedias = async (userId, nextPageId) => {
+  try {
+    const data = await fetchMoreUserMedias(userId, nextPageId )
+    return data
+  } catch (error) {
+    console.error("Error getting next medias:", error.message);
     throw error;
   }
 };

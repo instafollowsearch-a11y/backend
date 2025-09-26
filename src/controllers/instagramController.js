@@ -1,7 +1,7 @@
 import { validationResult } from 'express-validator';
 import rapidApiService from '../services/rapidApiService.js';
 import SearchHistory from '../models/SearchHistory.js';
-import { getAdvancedActivity, getNextFollowers, getNextFollowing, getRecentActivity, getSharedActivity } from '../services/hikerApiService.js';
+import { getAdvancedActivity, getInstagramAdmirers, getInstagramProfileDetails, getNextFollowers, getNextFollowing, getNextMedias, getRecentActivity, getSharedActivity } from '../services/hikerApiService.js';
 import { getUserInfo } from '../services/utils/hikerHelperFunctions.js';
 
 // Search for recent followers/following - RANDOM DATA for motivation
@@ -451,6 +451,129 @@ export const sharedActivity = async (req, res, next) => {
   }
 };
 
+export const getAdmirers = async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array()
+      });
+    }
+
+    const { username } = req.body;
+
+    // User should be available from middleware
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required for Admirer Feature'
+      });
+    }
+
+    // Perform advanced search with real data comparison
+    const startTime = Date.now();
+    const results = await getInstagramAdmirers(username);
+    const processingTime = Date.now() - startTime;
+
+    res.status(200).json({
+      success: true,
+      data: results
+    });
+  } catch (error) {
+    console.error('Advanced search error:', error);
+
+    // Обработка ошибки 429
+    if (error.message && error.message.includes('rate limit exceeded')) {
+      return res.status(429).json({
+        success: false,
+        error: 'API rate limit exceeded. Please try again in a few minutes or upgrade your plan for higher limits.',
+        retryAfter: 300 // 5 minutes
+      });
+    }
+
+    // Обработка ошибки 404
+    if (error.message && error.message.includes('User not found')) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found. Please check the username and try again.'
+      });
+    }
+
+    // Обработка ошибок сервера
+    if (error.message && error.message.includes('temporarily unavailable')) {
+      return res.status(503).json({
+        success: false,
+        error: 'Instagram API is temporarily unavailable. Please try again later.'
+      });
+    }
+
+    next(error);
+  }
+};
+
+export const getInstagramProfile = async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array()
+      });
+    }
+
+    const { username } = req.body;
+
+    // User should be available from middleware
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required for View Profile Page Feature'
+      });
+    }
+
+    // Perform advanced search with real data comparison
+    const startTime = Date.now();
+    const results = await getInstagramProfileDetails(username);
+    const processingTime = Date.now() - startTime;
+
+    res.status(200).json({
+      success: true,
+      data: results,
+      processingTime
+    });
+  } catch (error) {
+    console.error('Get instagram profile details error:', error);
+
+    // Обработка ошибки 429
+    if (error.message && error.message.includes('rate limit exceeded')) {
+      return res.status(429).json({
+        success: false,
+        error: 'API rate limit exceeded. Please try again in a few minutes or upgrade your plan for higher limits.',
+        retryAfter: 300 // 5 minutes
+      });
+    }
+
+    // Обработка ошибки 404
+    if (error.message && error.message.includes('User not found')) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found. Please check the username and try again.'
+      });
+    }
+
+    // Обработка ошибок сервера
+    if (error.message && error.message.includes('temporarily unavailable')) {
+      return res.status(503).json({
+        success: false,
+        error: 'Instagram API is temporarily unavailable. Please try again later.'
+      });
+    }
+
+    next(error);
+  }
+};
+
 export const nextFollowers = async (req, res) => {
   try {
     const { userId, nextPageId } = req.body;
@@ -515,6 +638,40 @@ export const nextFollowing = async (req, res) => {
     return res.status(500).json({
       success: false,
       error: 'Error getting next following'
+    });
+  }
+};
+
+export const nextMedias = async (req, res) => {
+  try {
+    const { userId, nextPageId } = req.body;
+
+    // User should be available from middleware
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required for advanced search'
+      });
+    }
+    if (!userId || !nextPageId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Params not provided'
+      });
+    }
+
+    // Perform advanced search with real data comparison
+    const results = await getNextMedias(userId, nextPageId);
+
+    res.status(200).json({
+      success: true,
+      data: results
+    });
+  } catch (error) {
+    console.error('Error getting next medias:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Error getting next medias'
     });
   }
 };

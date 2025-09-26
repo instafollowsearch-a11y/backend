@@ -9,7 +9,10 @@ import {
   advancedSearch,
   sharedActivity,
   nextFollowers,
-  nextFollowing
+  nextFollowing,
+  getAdmirers,
+  getInstagramProfile,
+  nextMedias
 } from '../controllers/instagramController.js';
 import { protect, authorize, optionalAuth } from '../middleware/auth.js';
 import axios from 'axios'; // Added axios import
@@ -75,6 +78,9 @@ router.post('/advanced-search', protect, searchValidation, advancedSearch);
 router.post('/shared-activity', protect, sharedActivityValidation, sharedActivity);
 router.post('/next-followers', protect, nextFollowers);
 router.post('/next-following', protect, nextFollowing);
+router.post('/next-medias', protect, nextMedias);
+router.post('/admirers', protect, getAdmirers);
+router.post('/view-profile', protect, getInstagramProfile);
 
 // Proxy route for Instagram images
 router.get('/proxy-image', async (req, res) => {
@@ -90,34 +96,130 @@ router.get('/proxy-image', async (req, res) => {
       return res.status(400).json({ error: 'Only Instagram URLs are allowed' });
     }
 
-    const response = await axios.get(url, {
-      responseType: 'stream',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Referer': 'https://www.instagram.com/',
-        'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
+    // Try multiple approaches to bypass Instagram's blocking
+    const approaches = [
+      // Approach 1: Standard request
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Referer': 'https://www.instagram.com/',
+          'Origin': 'https://www.instagram.com',
+          'Sec-Fetch-Dest': 'image',
+          'Sec-Fetch-Mode': 'no-cors',
+          'Sec-Fetch-Site': 'cross-site',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
       },
-      timeout: 10000
-    });
+      // Approach 2: Mobile user agent
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+          'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Referer': 'https://www.instagram.com/',
+          'Cache-Control': 'no-cache'
+        }
+      },
+      // Approach 3: Different browser
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Referer': 'https://www.instagram.com/',
+          'Cache-Control': 'no-cache'
+        }
+      }
+    ];
+
+    let response = null;
+    let lastError = null;
+
+    // Try each approach until one works
+    for (let i = 0; i < approaches.length; i++) {
+      try {
+        
+        response = await axios.get(url, {
+          responseType: 'stream',
+          headers: approaches[i].headers,
+          timeout: 15000,
+          maxRedirects: 5,
+          validateStatus: (status) => status < 500 // Accept 4xx but retry on 5xx
+        });
+
+        if (response.status === 200) {
+          break;
+        } else {
+          if (i === approaches.length - 1) {
+            throw new Error(`All approaches failed. Last status: ${response.status}`);
+          }
+        }
+      } catch (error) {
+        console.log(`Approach ${i + 1} failed:`, error.message);
+        lastError = error;
+        if (i === approaches.length - 1) {
+          throw lastError;
+        }
+      }
+    }
+
+    if (!response || response.status !== 200) {
+      throw new Error('All proxy approaches failed');
+    }
 
     // Set appropriate headers
     res.setHeader('Content-Type', response.headers['content-type'] || 'image/jpeg');
-    res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+    res.setHeader('Cache-Control', 'public, max-age=3600');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
+    // Handle client disconnection
+    req.on('close', () => {
+      console.log('Client disconnected, destroying stream');
+      if (response && response.data) {
+        response.data.destroy();
+      }
+    });
+
+    // Handle stream errors
+    response.data.on('error', (streamError) => {
+      console.error('Stream error:', streamError.message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Stream error occurred' });
+      }
+    });
+
     // Pipe the image data
-    response.data.pipe(res);
+    response.data.pipe(res, { end: true });
 
   } catch (error) {
     console.error('Image proxy error:', error.message);
-    res.status(500).json({ error: 'Failed to proxy image' });
+    
+    if (!res.headersSent) {
+      if (error.code === 'ECONNABORTED') {
+        res.status(408).json({ error: 'Request timeout' });
+      } else if (error.response) {
+        res.status(error.response.status).json({ 
+          error: 'Instagram request failed', 
+          status: error.response.status,
+          message: error.message 
+        });
+      } else {
+        res.status(500).json({ 
+          error: 'Failed to proxy image',
+          message: error.message 
+        });
+      }
+    }
   }
 });
+
+
 
 // Download story route
 router.get('/download-story', async (req, res) => {

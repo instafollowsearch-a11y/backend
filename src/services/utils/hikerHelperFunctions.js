@@ -476,7 +476,25 @@ export const fetchUserMedias = async (userId, limit = 24) => {
       nextPageId = res?.data?.next_page_id;
     }
 
-    return medias.slice(0, limit)
+    return { medias: medias.slice(0, limit), nextPageId }
+  } catch (err) {
+    console.error("Error fetching medias:", err);
+    return [];
+  }
+};
+
+export const fetchMoreUserMedias = async (userId, nextPageId) => {
+console.log(userId, nextPageId)
+  try {
+      const res = await hikerApi.get("/v2/user/medias", {
+        params: {
+          user_id: userId,
+          page_id: nextPageId,
+          safe_int: true,
+        },
+      });
+console.log(res?.data?.response)
+    return { medias: res?.data?.response?.items || [], nextPageId: res?.data?.next_page_id }
   } catch (err) {
     console.error("Error fetching medias:", err);
     return [];
