@@ -451,6 +451,43 @@ export const getPostComments = async (mediaId) => {
   }
 };
 
+// New helper: fetch comments with a hard cap using pagination
+export const getPostComentsWithCap = async (mediaId, cap = 60) => {
+  let comments = [];
+  let nextPageId = undefined;
+
+  try {
+    while (comments.length < cap) {
+      const res = await hikerApi.get("/v2/media/comments", {
+        params: {
+          id: mediaId,
+          page_id: nextPageId,
+        },
+      });
+
+      const data = res?.data?.response || { comments: [] };
+      const pageComments = data.comments?.map((record) => ({ ...record, postId: mediaId })) || [];
+
+      if (pageComments.length === 0) {
+        break;
+      }
+
+      comments = comments.concat(pageComments);
+
+      // Stop if no more pages or we've reached the cap
+      nextPageId = res?.data?.next_page_id;
+      if (!nextPageId) {
+        break;
+      }
+    }
+
+    return comments.slice(0, cap);
+  } catch (err) {
+    console.error(`Error fetching capped comments for media ${mediaId}:`, err.message);
+    return comments.slice(0, cap);
+  }
+};
+
 export const fetchUserMedias = async (userId, limit = 24) => {
   let medias = [];
   let nextPageId = undefined;

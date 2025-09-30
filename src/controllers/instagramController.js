@@ -2,7 +2,7 @@ import { validationResult } from 'express-validator';
 import rapidApiService from '../services/rapidApiService.js';
 import SearchHistory from '../models/SearchHistory.js';
 import { getAdvancedActivity, getInstagramAdmirers, getInstagramProfileDetails, getNextFollowers, getNextFollowing, getNextMedias, getRecentActivity, getSharedActivity } from '../services/hikerApiService.js';
-import { getUserInfo } from '../services/utils/hikerHelperFunctions.js';
+import { getPostComentsWithCap, getPostLikers, getUserInfo } from '../services/utils/hikerHelperFunctions.js';
 
 // Search for recent followers/following - RANDOM DATA for motivation
 export const searchRecent = async (req, res, next) => {
@@ -672,6 +672,74 @@ export const nextMedias = async (req, res) => {
     return res.status(500).json({
       success: false,
       error: 'Error getting next medias'
+    });
+  }
+};
+
+export const getMediaLikers = async (req, res) => {
+  try {
+    const { mediaId } = req.body;
+
+    // User should be available from middleware
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required for advanced search'
+      });
+    }
+    if (!mediaId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Params not provided'
+      });
+    }
+
+    // Perform advanced search with real data comparison
+    const results = await getPostLikers(mediaId);
+
+    res.status(200).json({
+      success: true,
+      data: results
+    });
+  } catch (error) {
+    console.error('Error getting media likers:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Error getting media likers'
+    });
+  }
+};
+
+export const getMediaComments = async (req, res) => {
+  try {
+    const { mediaId } = req.body;
+
+    // User should be available from middleware
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required for advanced search'
+      });
+    }
+    if (!mediaId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Params not provided'
+      });
+    }
+
+    // Perform advanced search with real data comparison
+    const results = await getPostComentsWithCap(mediaId);
+
+    res.status(200).json({
+      success: true,
+      data: results
+    });
+  } catch (error) {
+    console.error('Error getting media comments:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Error getting media comments'
     });
   }
 };

@@ -12,7 +12,9 @@ import {
   nextFollowing,
   getAdmirers,
   getInstagramProfile,
-  nextMedias
+  nextMedias,
+  getMediaLikers,
+  getMediaComments
 } from '../controllers/instagramController.js';
 import { protect, authorize, optionalAuth } from '../middleware/auth.js';
 import axios from 'axios'; // Added axios import
@@ -81,6 +83,8 @@ router.post('/next-following', protect, nextFollowing);
 router.post('/next-medias', protect, nextMedias);
 router.post('/admirers', protect, getAdmirers);
 router.post('/view-profile', protect, getInstagramProfile);
+router.post('/media-likers', protect, getMediaLikers);
+router.post('/media-comments', protect, getMediaComments);
 
 // Proxy route for Instagram images
 router.get('/proxy-image', async (req, res) => {

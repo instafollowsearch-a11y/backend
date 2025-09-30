@@ -402,7 +402,8 @@ export const getInstagramAdmirers = async (username) => {
 };
 
 export const getInstagramProfileDetails = async (username) => {
-
+  const startTime = Date.now();
+  
   try {
     const userinfo = await getUserInfo(username);
     const userId = userinfo.id || userinfo.pk;
@@ -420,10 +421,24 @@ export const getInstagramProfileDetails = async (username) => {
       userStories,
       userFollowers,
       userFollowing,
+      totalPosts: userPosts.length,
+      processingTime: Date.now() - startTime,
     };
   } catch (error) {
     console.error("Error getting profile details:", error.message);
-    throw error;
+    console.error("Full error:", error);
+    
+    return {
+      success: false,
+      error: error.message,
+      userinfo: null,
+      userPosts: [],
+      userStories: null,
+      userFollowers: null,
+      userFollowing: null,
+      totalPosts: 0,
+      processingTime: Date.now() - startTime,
+    };
   }
 };
 
