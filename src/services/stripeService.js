@@ -148,7 +148,8 @@ export const changeSubscription = async (customer, newPriceId) => {
           price: newPriceId,
         },
       ],
-      proration_behavior: "none", // or "create_prorations"
+      proration_behavior: "always_invoice",
+      billing_cycle_anchor: 'now',
     });
 
     return {
