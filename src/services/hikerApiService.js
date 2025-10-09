@@ -376,18 +376,20 @@ export const getInstagramAdmirers = async (username) => {
     });
 
     // Step 5: Convert counts to percentage
-    const totalPosts = userPosts.length;
+    const totalPosts = userPosts?.medias?.length || 0;
     let admirers = Object.values(likerCounts).map((liker) => ({
       id: liker.id,
       username: liker.username,
       profilePicUrl: liker.profilePicUrl,
-      likePercentage: Math.round((liker.count / totalPosts) * 100),
+      likePercentage: totalPosts > 0 ? Math.round((liker.count / totalPosts) * 100) : 0,
     }));
 
     // Step 6: Sort & rank
     admirers = admirers
       .sort((a, b) => b.likePercentage - a.likePercentage || a.username.localeCompare(b.username))
       .map((item, idx) => ({ ...item, rank: idx + 1 }));
+
+    admirers = admirers.slice(0, 100);
 
     return {
       success: true,
