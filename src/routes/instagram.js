@@ -77,12 +77,12 @@ router.get('/analytics', protect, authorize('admin'), getAnalytics);
 router.post('/advanced-search', protect, searchValidation, advancedSearch);
 
 // Shared Activity among two IG accounts (authenticated users only)
-router.post('/shared-activity', protect, sharedActivityValidation, sharedActivity);
+router.post('/shared-activity', optionalAuth, sharedActivityValidation, sharedActivity);
 router.post('/next-followers', protect, nextFollowers);
 router.post('/next-following', protect, nextFollowing);
 router.post('/next-medias', protect, nextMedias);
-router.post('/admirers', protect, getAdmirers);
-router.post('/view-profile', protect, getInstagramProfile);
+router.post('/admirers', optionalAuth, getAdmirers);
+router.post('/view-profile', optionalAuth, getInstagramProfile);
 router.post('/media-likers', protect, getMediaLikers);
 router.post('/media-comments', protect, getMediaComments);
 
