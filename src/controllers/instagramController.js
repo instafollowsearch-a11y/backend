@@ -403,12 +403,12 @@ export const sharedActivity = async (req, res, next) => {
     const { username1, username2 } = req.body;
 
     // User should be available from middleware
-    if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        error: 'Authentication required for advanced search'
-      });
-    }
+    // if (!req.user) {
+    //   return res.status(401).json({
+    //     success: false,
+    //     error: 'Authentication required for advanced search'
+    //   });
+    // }
 
     // Perform advanced search with real data comparison
     const startTime = Date.now();
@@ -464,12 +464,12 @@ export const getAdmirers = async (req, res, next) => {
     const { username } = req.body;
 
     // User should be available from middleware
-    if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        error: 'Authentication required for Admirer Feature'
-      });
-    }
+    // if (!req.user) {
+    //   return res.status(401).json({
+    //     success: false,
+    //     error: 'Authentication required for Admirer Feature'
+    //   });
+    // }
 
     // Perform advanced search with real data comparison
     const startTime = Date.now();
@@ -525,12 +525,12 @@ export const getInstagramProfile = async (req, res, next) => {
     const { username } = req.body;
 
     // User should be available from middleware
-    if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        error: 'Authentication required for View Profile Page Feature'
-      });
-    }
+    // if (!req.user) {
+    //   return res.status(401).json({
+    //     success: false,
+    //     error: 'Authentication required for View Profile Page Feature'
+    //   });
+    // }
 
     // Perform advanced search with real data comparison
     const startTime = Date.now();
