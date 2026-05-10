@@ -11,6 +11,30 @@ const hikerApi = axios.create({
 
 const maxLimit = 500;
 
+const getUserKey = (user) => {
+  const key = user?.id ?? user?.pk ?? user?.username;
+  return key === undefined || key === null ? null : String(key);
+};
+
+const uniqueUsersInOrder = (users = []) => {
+  const seen = new Set();
+  const uniqueUsers = [];
+
+  for (const user of users) {
+    const key = getUserKey(user);
+    if (!key) {
+      uniqueUsers.push(user);
+      continue;
+    }
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueUsers.push(user);
+    }
+  }
+
+  return uniqueUsers;
+};
 
 export const getUserInfo = async (username) => {
   try {
@@ -73,7 +97,7 @@ export const getFollowers = async ({ userId, skipOnId = null, fetchOnce = false 
         externalUrl: user.external_url,
       }));
 
-      results.push(...mappedUsers);
+      results = uniqueUsersInOrder([...results, ...mappedUsers]);
 
       // check if more pages exist
       nextPageId = response.data?.next_page_id;
@@ -112,7 +136,7 @@ export const getNextFollowersData = async ({ userId, nextPageId }) => {
       externalUrl: user.external_url,
     }));
 
-    return { followers: mappedUsers, nextPageId: response?.data?.next_page_id }
+    return { followers: uniqueUsersInOrder(mappedUsers), nextPageId: response?.data?.next_page_id }
   } catch (error) {
     handleApiError(error, "getting followers");
     return [];
@@ -149,7 +173,7 @@ export const getFollowing = async ({ userId, skipOnId = null, fetchOnce = false 
         externalUrl: user.external_url,
       }));
 
-      results.push(...mappedUsers);
+      results = uniqueUsersInOrder([...results, ...mappedUsers]);
 
       nextPageId = response.data?.[1];
 
@@ -190,7 +214,7 @@ export const getNextFollowingData = async ({ userId, nextPageId }) => {
       externalUrl: user.external_url,
     }));
 
-    return { following: mappedUsers, nextPageId: response.data?.[1] }
+    return { following: uniqueUsersInOrder(mappedUsers), nextPageId: response.data?.[1] }
   } catch (error) {
     handleApiError(error, "getting following");
     return [];
@@ -289,8 +313,11 @@ export const generateRandomNewUsers = (currentUsers, previousUsers, type) => {
 }
 
 export const findNewUsers = (currentUsers, previousUsers) => {
-  const previousIds = new Set(previousUsers.map(user => String(user.id)));
-  return currentUsers.filter(user => !previousIds.has(String(user.id)));
+  const previousIds = new Set((previousUsers || []).map(getUserKey).filter(Boolean));
+  return uniqueUsersInOrder(currentUsers || []).filter(user => {
+    const key = getUserKey(user);
+    return key && !previousIds.has(key);
+  });
 }
 
 export const analyzeRedFlags = (userData) => {
