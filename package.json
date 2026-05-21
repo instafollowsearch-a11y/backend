@@ -9,6 +9,7 @@
     "dev": "nodemon src/server.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "test:rapidapi": "node test-rapidapi.js",
+    "smoke:pagination": "node scripts/smoke-list-pagination.js",
     "migrate": "node scripts/migrate.js",
     "reset-db": "node scripts/reset-db.js"
   },

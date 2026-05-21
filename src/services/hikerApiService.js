@@ -1,5 +1,15 @@
 import InstagramCache from "../models/InstagramCache.js";
+import { useApifyForFollowLists } from "./apifyDataDopingService.js";
 import { getUserInfo, getFollowers, getFollowing, getUserStories, updateCache, findNewUsers, getPostLikers, getPostComments, getNextFollowersData, getNextFollowingData, fetchUserMedias, fetchMoreUserMedias } from "./utils/hikerHelperFunctions.js";
+
+/** Apify lists are already newest-first; Hiker path keeps cache-diff "new" users. */
+const followListForDisplay = (fullList, previousList) => {
+  const list = Array.isArray(fullList) ? fullList : [];
+  if (useApifyForFollowLists()) {
+    return [...list];
+  }
+  return findNewUsers(list, previousList);
+};
 
 export const getRecentActivity = async (username, userSubscription = 'free') => {
   const startTime = Date.now();
@@ -19,23 +29,26 @@ export const getRecentActivity = async (username, userSubscription = 'free') => 
     // Get fresh data and stories
     const userId = userInfo.id || userInfo.pk;
     const [followersData, followingData, userPosts] = await Promise.all([
-      getFollowers({ userId, fetchOnce: true }),
-      getFollowing({ userId, fetchOnce: true }),
+      getFollowers({ userId, username, fetchOnce: true }),
+      getFollowing({ userId, username, fetchOnce: true }),
       fetchUserMedias(userId, 12)
     ]);
-    const followers = followersData?.followers;
-    const following = followingData?.following
+    const followersFull =
+      followersData?.followersFull ?? followersData?.followers ?? [];
+    const followingFull =
+      followingData?.followingFull ?? followingData?.following ?? [];
+    const followers = followersData?.followers ?? followersFull;
+    const following = followingData?.following ?? followingFull;
 
-    // Update cache
+    // Update cache (full lists for comparison + premium load-more)
     cachedData = await updateCache(username, {
       userData: userInfo,
-      followers,
-      following
+      followers: followersFull,
+      following: followingFull,
     });
 
-    // Find new followers/following using random generation logic
-    const newFollowers = findNewUsers(followers, previousFollowers);
-    const newFollowing = findNewUsers(following, previousFollowing);
+    const newFollowers = followListForDisplay(followersFull, previousFollowers);
+    const newFollowing = followListForDisplay(followingFull, previousFollowing);
 
     const userPostsData = await Promise.all(
       userPosts?.medias?.map(async (post) => {
@@ -62,8 +75,8 @@ export const getRecentActivity = async (username, userSubscription = 'free') => 
       .filter((entry) => entry.count > 1)
       .map((entry) => ({ ...entry.user, count: entry.count }));
 
-    const followerIds = new Set(followers.map(f => f.id));
-    const followingIds = new Set(following.map(f => f.id));
+    const followerIds = new Set(followersFull.map(f => f.id));
+    const followingIds = new Set(followingFull.map(f => f.id));
 
     // Keep only frequent likers who are also in followers or following
     const redFlags = frequentLikers.filter((liker) =>
@@ -79,11 +92,12 @@ export const getRecentActivity = async (username, userSubscription = 'free') => 
 
       followers,
       following,
+      followListOrder: useApifyForFollowLists() ? "chronological" : "diff",
       totalNewFollowers: newFollowers.length,
       totalNewFollowing: newFollowing.length,
       lastUpdated: new Date(),
-      totalFollowers: followers.length,
-      totalFollowing: following.length,
+      totalFollowers: followersFull.length,
+      totalFollowing: followingFull.length,
       processingTime: Date.now() - startTime
     };
   } catch (error) {
@@ -111,20 +125,25 @@ export const getAdvancedActivity = async (username, userSubscription = 'free') =
     // Get fresh data and stories
     const userId = userInfo.id || userInfo.pk;
     const [followersData, followingData, stories, userPosts] = await Promise.all([
-      getFollowers({ userId, fetchOnce: true }),
-      getFollowing({ userId, fetchOnce: true }),
+      getFollowers({ userId, username, fetchOnce: true }),
+      getFollowing({ userId, username, fetchOnce: true }),
       getUserStories({ userId }),
       fetchUserMedias(userId, 12)
     ]);
-    const followers = followersData?.followers;
-    const following = followingData?.following
+    const followersFull =
+      followersData?.followersFull ?? followersData?.followers ?? [];
+    const followingFull =
+      followingData?.followingFull ?? followingData?.following ?? [];
 
     // Update cache
     cachedData = await updateCache(username, {
       userData: userInfo,
-      followers,
-      following
+      followers: followersFull,
+      following: followingFull,
     });
+
+    const followers = followersData?.followers ?? followersFull;
+    const following = followingData?.following ?? followingFull;
 
     const userPostsData = await Promise.all(
       userPosts?.medias?.map(async (post) => {
@@ -160,9 +179,8 @@ export const getAdvancedActivity = async (username, userSubscription = 'free') =
     );
 
 
-    // Find REAL new followers/following (no random generation)
-    const newFollowers = findNewUsers(followers, previousFollowers);
-    const newFollowing = findNewUsers(following, previousFollowing);
+    const newFollowers = followListForDisplay(followersFull, previousFollowers);
+    const newFollowing = followListForDisplay(followingFull, previousFollowing);
 
     // Add red flags and stories only for premium users
 
@@ -174,11 +192,12 @@ export const getAdvancedActivity = async (username, userSubscription = 'free') =
       newFollowing,
       stories: premiumStories,
       redFlags,
+      followListOrder: useApifyForFollowLists() ? "chronological" : "diff",
       totalNewFollowers: newFollowers.length,
       totalNewFollowing: newFollowing.length,
       lastUpdated: new Date(),
-      totalFollowers: followers.length,
-      totalFollowing: following.length,
+      totalFollowers: followersFull.length,
+      totalFollowing: followingFull.length,
       processingTime: Date.now() - startTime,
       followersNextPageId: followersData?.nextPageId,
       followingNextPageId: followingData?.nextPageId,
@@ -205,8 +224,16 @@ export const getSharedActivity = async (username1, username2) => {
 
     // Get following info
     const [firstUserFollowingData, secondUserFollowingData] = await Promise.all([
-      getFollowing({ userId: firstUserId, skipOnId: secondUserId }),
-      getFollowing({ userId: secondUserId, skipOnId: firstUserId }),
+      getFollowing({
+        userId: firstUserId,
+        username: firstUser.username,
+        skipOnId: secondUserId,
+      }),
+      getFollowing({
+        userId: secondUserId,
+        username: secondUser.username,
+        skipOnId: firstUserId,
+      }),
     ]);
     const firstUserFollowing = firstUserFollowingData?.following;
     const secondUserFollowing = secondUserFollowingData?.following;
@@ -412,8 +439,8 @@ export const getInstagramProfileDetails = async (username) => {
     const [userPosts, userStories, userFollowers, userFollowing] = await Promise.all([
       fetchUserMedias(userId, 24),
       getUserStories({ userId }),
-      getFollowers({ userId, fetchOnce: true }),
-      getFollowing({ userId, fetchOnce: true })
+      getFollowers({ userId, username, fetchOnce: true }),
+      getFollowing({ userId, username, fetchOnce: true })
     ]);
 
     return {

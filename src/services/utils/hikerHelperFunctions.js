@@ -1,5 +1,15 @@
 import axios from "axios";
 import InstagramCache from "../../models/InstagramCache.js";
+import {
+  fetchFollowersFromApify,
+  fetchFollowingFromApify,
+  useApifyForFollowLists,
+} from "../apifyDataDopingService.js";
+import {
+  LIST_PAGE_SIZE,
+  sliceListPage,
+  firstPageFromFullList,
+} from "./listPagination.js";
 
 const hikerApi = axios.create({
   baseURL: "https://api.hikerapi.com",
@@ -10,6 +20,20 @@ const hikerApi = axios.create({
 });
 
 const maxLimit = 500;
+
+export const findCacheByUserId = async (userId) => {
+  if (userId == null) return null;
+  const idStr = String(userId);
+  const rows = await InstagramCache.findAll({
+    attributes: ["username", "followers", "following", "userData"],
+  });
+  return (
+    rows.find((row) => {
+      const ud = row.userData || {};
+      return String(ud.id) === idStr || String(ud.pk) === idStr;
+    }) ?? null
+  );
+};
 
 const getUserKey = (user) => {
   const key = user?.id ?? user?.pk ?? user?.username;
@@ -69,155 +93,231 @@ export const getUserInfo = async (username) => {
   }
 }
 
-export const getFollowers = async ({ userId, skipOnId = null, fetchOnce = false }) => {
+const mapHikerFollowerUser = (user) => ({
+  id: user.pk,
+  username: user.username,
+  fullName: user.full_name,
+  profilePicUrl: user.profile_pic_url,
+  isVerified: user.is_verified,
+  isPrivate: user.is_private,
+  followerCount: user.follower_count,
+  followingCount: user.following_count,
+  mediaCount: user.media_count,
+  biography: user.biography,
+  externalUrl: user.external_url,
+});
+
+const mapHikerFollowingUser = (user) => ({
+  id: user.id,
+  username: user.username,
+  fullName: user.full_name,
+  profilePicUrl: user.profile_pic_url,
+  isVerified: user.is_verified,
+  isPrivate: user.is_private,
+  followerCount: user.follower_count,
+  followingCount: user.following_count,
+  mediaCount: user.media_count,
+  biography: user.biography,
+  externalUrl: user.external_url,
+});
+
+const resolveUsername = async (username, userId) => {
+  if (username) return username;
+  const cache = await findCacheByUserId(userId);
+  return cache?.username ?? null;
+};
+
+const getFollowersHiker = async ({ userId, skipOnId = null, fetchOnce = false }) => {
+  let results = [];
+  let nextPageId = undefined;
+
+  while (results.length < maxLimit) {
+    const response = await hikerApi.get("/v2/user/followers", {
+      params: { user_id: userId, page_id: nextPageId },
+    });
+    const users = response.data.response?.users || [];
+    const mappedUsers = users.map(mapHikerFollowerUser);
+    results = uniqueUsersInOrder([...results, ...mappedUsers]);
+    nextPageId = response.data?.next_page_id;
+    if (
+      !nextPageId ||
+      users.length === 0 ||
+      users.some((user) => String(user.pk) === String(skipOnId)) ||
+      fetchOnce
+    ) {
+      break;
+    }
+  }
+
+  return { followers: results.slice(0, maxLimit), nextPageId };
+};
+
+const getFollowingHiker = async ({ userId, skipOnId = null, fetchOnce = false }) => {
+  let results = [];
+  let nextPageId = undefined;
+
+  while (results.length < maxLimit) {
+    const response = await hikerApi.get("/gql/user/following/chunk", {
+      params: { user_id: userId, end_cursor: nextPageId },
+    });
+    const users = response.data?.[0] || [];
+    const mappedUsers = users.map(mapHikerFollowingUser);
+    results = uniqueUsersInOrder([...results, ...mappedUsers]);
+    nextPageId = response.data?.[1];
+    if (
+      !nextPageId ||
+      users.length === 0 ||
+      users.some((user) => String(user.id) === String(skipOnId)) ||
+      fetchOnce
+    ) {
+      break;
+    }
+  }
+
+  return { following: results.slice(0, maxLimit), nextPageId };
+};
+
+export const getFollowers = async ({
+  userId,
+  username = null,
+  skipOnId = null,
+  fetchOnce = false,
+}) => {
   try {
-    let results = [];
-    let nextPageId = undefined;
+    if (!useApifyForFollowLists()) {
+      return await getFollowersHiker({ userId, skipOnId, fetchOnce });
+    }
 
-    while (results.length < maxLimit) {
-      const response = await hikerApi.get("/v2/user/followers", {
-        params: {
-          user_id: userId,
-          page_id: nextPageId,
-        },
-      });
-      console.log("Users in each followers response", response.data.response.users.length);
-      const users = response.data.response?.users || [];
-      const mappedUsers = users.map((user) => ({
-        id: user.pk,
-        username: user.username,
-        fullName: user.full_name,
-        profilePicUrl: user.profile_pic_url,
-        isVerified: user.is_verified,
-        isPrivate: user.is_private,
-        followerCount: user.follower_count,
-        followingCount: user.following_count,
-        mediaCount: user.media_count,
-        biography: user.biography,
-        externalUrl: user.external_url,
-      }));
+    const resolvedUsername = await resolveUsername(username, userId);
+    if (!resolvedUsername) {
+      throw new Error("User not found. Please check the username and try again.");
+    }
 
-      results = uniqueUsersInOrder([...results, ...mappedUsers]);
+    const apifyStart = Date.now();
+    let fullList = await fetchFollowersFromApify(resolvedUsername, maxLimit);
+    console.log(
+      `[followers] provider=apify username=@${resolvedUsername} count=${fullList.length} ms=${Date.now() - apifyStart}`
+    );
 
-      // check if more pages exist
-      nextPageId = response.data?.next_page_id;
-      if (!nextPageId || users.length === 0 || users.some(user => String(user.pk) === String(skipOnId)) || fetchOnce) {
-        break;
+    if (skipOnId) {
+      const idx = fullList.findIndex((u) => String(u.id) === String(skipOnId));
+      if (idx === -1 && fullList.length >= maxLimit) {
+        fullList = await fetchFollowersFromApify(resolvedUsername, maxLimit);
       }
     }
 
-    return { followers: results.slice(0, maxLimit), nextPageId }
+    const capped = fullList.slice(0, maxLimit);
+    const { page, nextPageId } = firstPageFromFullList(capped, LIST_PAGE_SIZE);
+
+    return {
+      followers: fetchOnce ? page : capped,
+      nextPageId,
+      followersFull: capped,
+    };
   } catch (error) {
     handleApiError(error, "getting followers");
-    return [];
   }
 };
+
 export const getNextFollowersData = async ({ userId, nextPageId }) => {
   try {
-    const response = await hikerApi.get("/v2/user/followers", {
-      params: {
-        user_id: Number(userId),
-        page_id: nextPageId,
-      },
-    });
-    console.log("Users in each followers response", response.data.response.users.length);
-    const users = response.data.response?.users || [];
-    const mappedUsers = users.map((user) => ({
-      id: user.pk,
-      username: user.username,
-      fullName: user.full_name,
-      profilePicUrl: user.profile_pic_url,
-      isVerified: user.is_verified,
-      isPrivate: user.is_private,
-      followerCount: user.follower_count,
-      followingCount: user.following_count,
-      mediaCount: user.media_count,
-      biography: user.biography,
-      externalUrl: user.external_url,
-    }));
+    if (!useApifyForFollowLists()) {
+      const response = await hikerApi.get("/v2/user/followers", {
+        params: { user_id: Number(userId), page_id: nextPageId },
+      });
+      const users = response.data.response?.users || [];
+      return {
+        followers: uniqueUsersInOrder(users.map(mapHikerFollowerUser)),
+        nextPageId: response?.data?.next_page_id,
+      };
+    }
 
-    return { followers: uniqueUsersInOrder(mappedUsers), nextPageId: response?.data?.next_page_id }
+    const cache = await findCacheByUserId(userId);
+    if (!cache?.followers?.length) {
+      return { followers: [], nextPageId: null };
+    }
+
+    const { items, nextPageId: next } = sliceListPage(
+      cache.followers,
+      nextPageId,
+      LIST_PAGE_SIZE
+    );
+    return { followers: items, nextPageId: next };
   } catch (error) {
     handleApiError(error, "getting followers");
-    return [];
+    return { followers: [], nextPageId: null };
   }
 };
 
-export const getFollowing = async ({ userId, skipOnId = null, fetchOnce = false }) => {
+export const getFollowing = async ({
+  userId,
+  username = null,
+  skipOnId = null,
+  fetchOnce = false,
+}) => {
   try {
-    let results = [];
-    let nextPageId = undefined;
+    if (!useApifyForFollowLists()) {
+      return await getFollowingHiker({ userId, skipOnId, fetchOnce });
+    }
 
-    while (results.length < maxLimit) {
-      const response = await hikerApi.get("/gql/user/following/chunk", {
-        params: {
-          user_id: userId,
-          end_cursor: nextPageId,
-        },
-      });
+    const resolvedUsername = await resolveUsername(username, userId);
+    if (!resolvedUsername) {
+      throw new Error("User not found. Please check the username and try again.");
+    }
 
-      const users = response.data?.[0] || [];
-      console.log("Users in each following response", response.data?.[0]?.length);
+    const apifyStart = Date.now();
+    let fullList = await fetchFollowingFromApify(resolvedUsername, maxLimit);
+    console.log(
+      `[following] provider=apify username=@${resolvedUsername} count=${fullList.length} ms=${Date.now() - apifyStart}`
+    );
 
-      const mappedUsers = users.map((user) => ({
-        id: user.id,
-        username: user.username,
-        fullName: user.full_name,
-        profilePicUrl: user.profile_pic_url,
-        isVerified: user.is_verified,
-        isPrivate: user.is_private,
-        followerCount: user.follower_count,
-        followingCount: user.following_count,
-        mediaCount: user.media_count,
-        biography: user.biography,
-        externalUrl: user.external_url,
-      }));
-
-      results = uniqueUsersInOrder([...results, ...mappedUsers]);
-
-      nextPageId = response.data?.[1];
-
-      if (!nextPageId || users.length === 0 || users.some(user => String(user.id) === String(skipOnId)) || fetchOnce) {
-        break;
+    if (skipOnId) {
+      const idx = fullList.findIndex((u) => String(u.id) === String(skipOnId));
+      if (idx === -1 && fullList.length >= maxLimit) {
+        fullList = await fetchFollowingFromApify(resolvedUsername, maxLimit);
       }
     }
 
-    return { following: results.slice(0, maxLimit), nextPageId };
+    const capped = fullList.slice(0, maxLimit);
+    const { page, nextPageId } = firstPageFromFullList(capped, LIST_PAGE_SIZE);
+
+    return {
+      following: fetchOnce ? page : capped,
+      nextPageId,
+      followingFull: capped,
+    };
   } catch (error) {
     handleApiError(error, "getting following");
-    return [];
   }
 };
-
 
 export const getNextFollowingData = async ({ userId, nextPageId }) => {
   try {
-    const response = await hikerApi.get("/gql/user/following/chunk", {
-      params: {
-        user_id: Number(userId),
-        end_cursor: nextPageId,
-      },
-    });
-    console.log("Users in each following response", response.data?.[0]?.length);
-    const users = response.data?.[0] || [];
-    const mappedUsers = users.map((user) => ({
-      id: user.id,
-      username: user.username,
-      fullName: user.full_name,
-      profilePicUrl: user.profile_pic_url,
-      isVerified: user.is_verified,
-      isPrivate: user.is_private,
-      followerCount: user.follower_count,
-      followingCount: user.following_count,
-      mediaCount: user.media_count,
-      biography: user.biography,
-      externalUrl: user.external_url,
-    }));
+    if (!useApifyForFollowLists()) {
+      const response = await hikerApi.get("/gql/user/following/chunk", {
+        params: { user_id: Number(userId), end_cursor: nextPageId },
+      });
+      const users = response.data?.[0] || [];
+      return {
+        following: uniqueUsersInOrder(users.map(mapHikerFollowingUser)),
+        nextPageId: response.data?.[1],
+      };
+    }
 
-    return { following: uniqueUsersInOrder(mappedUsers), nextPageId: response.data?.[1] }
+    const cache = await findCacheByUserId(userId);
+    if (!cache?.following?.length) {
+      return { following: [], nextPageId: null };
+    }
+
+    const { items, nextPageId: next } = sliceListPage(
+      cache.following,
+      nextPageId,
+      LIST_PAGE_SIZE
+    );
+    return { following: items, nextPageId: next };
   } catch (error) {
     handleApiError(error, "getting following");
-    return [];
+    return { following: [], nextPageId: null };
   }
 };
 
@@ -568,6 +668,17 @@ console.log(res?.data?.response)
 
 const handleApiError = (error, context = 'API request') => {
   console.error(`Error in ${context}:`, error.message);
+
+  if (error.message && !error.response) {
+    if (
+      error.message.includes('rate limit exceeded') ||
+      error.message.includes('temporarily unavailable') ||
+      error.message.includes('User not found') ||
+      error.message.includes('Access denied')
+    ) {
+      throw error;
+    }
+  }
 
   // Обработка ошибки 429 (Too Many Requests)
   if (error.response && error.response.status === 429) {

@@ -163,3 +163,6 @@ out/
 
 # Storybook build outputs
 storybook-static
+
+# Local dev docs (keep out of git)
+docs.dev/

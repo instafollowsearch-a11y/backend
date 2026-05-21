@@ -73,6 +73,7 @@ export const searchRecent = async (req, res, next) => {
 
         followers: results.followers,
         following: results.following,
+        followListOrder: results.followListOrder,
         // Always show upgrade CTA for regular search
         showUpgradeCTA: true,
         message: "Upgrade to Premium for complete Instagram analytics and real-time tracking!"
@@ -348,6 +349,7 @@ export const advancedSearch = async (req, res, next) => {
         followingNextPageId: results.followingNextPageId,
         followers: results.followers,
         following: results.following,
+        followListOrder: results.followListOrder,
         processingTime,
         searchId: searchEntry.id,
         comparison,
