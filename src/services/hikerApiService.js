@@ -101,8 +101,31 @@ const fetchFollowLists = async ({
   return { followersData, followingData, fromCache: false };
 };
 
-const computeRedFlags = async (userId, followersFull, followingFull, postLimit) => {
-  if (!postLimit || postLimit <= 0) return [];
+const buildFollowKeySet = (users = []) => {
+  const keys = new Set();
+  for (const u of users) {
+    if (u?.id != null) keys.add(String(u.id));
+    if (u?.pk != null) keys.add(String(u.pk));
+    if (u?.username) keys.add(String(u.username).toLowerCase());
+  }
+  return keys;
+};
+
+const likerMatchesFollowLists = (liker, followerKeys, followingKeys) => {
+  const ids = [liker.id, liker.pk].filter(Boolean).map(String);
+  const username = liker.username ? String(liker.username).toLowerCase() : null;
+  for (const id of ids) {
+    if (followerKeys.has(id) || followingKeys.has(id)) return true;
+  }
+  if (username && (followerKeys.has(username) || followingKeys.has(username))) {
+    return true;
+  }
+  return false;
+};
+
+/** Fetch post likers only (no follow-list filter). Safe to run parallel with Apify. */
+const fetchLikerFrequencyMap = async (userId, postLimit) => {
+  if (!postLimit || postLimit <= 0) return {};
 
   const userPosts = await fetchUserMedias(userId, postLimit);
   const userPostsData = await Promise.all(
@@ -115,25 +138,33 @@ const computeRedFlags = async (userId, followersFull, followingFull, postLimit) 
   const likerMap = {};
   for (const { likers } of userPostsData) {
     for (const liker of likers) {
-      const likerId = liker.id ?? liker.pk;
-      if (!likerId) continue;
-      if (!likerMap[likerId]) {
-        likerMap[likerId] = { user: { ...liker }, count: 0 };
+      const likerKey = String(liker.id ?? liker.pk ?? liker.username ?? "");
+      if (!likerKey) continue;
+      if (!likerMap[likerKey]) {
+        likerMap[likerKey] = { user: { ...liker }, count: 0 };
       }
-      likerMap[likerId].count += 1;
+      likerMap[likerKey].count += 1;
     }
   }
+  return likerMap;
+};
 
-  const frequentLikers = Object.values(likerMap)
+const redFlagsFromLikerMap = (likerMap, followersFull, followingFull) => {
+  const followerKeys = buildFollowKeySet(followersFull);
+  const followingKeys = buildFollowKeySet(followingFull);
+
+  return Object.values(likerMap)
     .filter((entry) => entry.count > 1)
-    .map((entry) => ({ ...entry.user, count: entry.count }));
+    .map((entry) => ({ ...entry.user, count: entry.count }))
+    .filter((liker) =>
+      likerMatchesFollowLists(liker, followerKeys, followingKeys)
+    );
+};
 
-  const followerIds = new Set((followersFull || []).map((f) => f.id));
-  const followingIds = new Set((followingFull || []).map((f) => f.id));
-
-  return frequentLikers.filter(
-    (liker) => followerIds.has(liker.id) || followingIds.has(liker.id)
-  );
+const scheduleCacheUpdate = (username, payload) => {
+  updateCache(username, payload).catch((err) => {
+    console.error("Background cache update failed:", err.message);
+  });
 };
 
 export const getRecentActivity = async (
@@ -152,13 +183,18 @@ export const getRecentActivity = async (
     const previousFollowing = cachedData?.following || [];
     const userId = userInfo.id || userInfo.pk;
 
-    const { followersData, followingData } = await fetchFollowLists({
-      userId,
-      username,
-      searchType: "both",
-      forPremium: false,
-      cachedData,
-    });
+    const redFlagLimit = getRedFlagPostLimit(false);
+    const [{ followersData, followingData, fromCache }, likerMap] =
+      await Promise.all([
+        fetchFollowLists({
+          userId,
+          username,
+          searchType: "both",
+          forPremium: false,
+          cachedData,
+        }),
+        fetchLikerFrequencyMap(userId, redFlagLimit),
+      ]);
 
     const followersFull =
       followersData?.followersFull ?? followersData?.followers ?? [];
@@ -172,15 +208,17 @@ export const getRecentActivity = async (
     const cacheFollowing =
       followingFull.length > 0 ? followingFull : previousFollowing;
 
-    const redFlagLimit = getRedFlagPostLimit(false);
-    const [, redFlags] = await Promise.all([
-      updateCache(username, {
-        userData: userInfo,
-        followers: cacheFollowers,
-        following: cacheFollowing,
-      }),
-      computeRedFlags(userId, cacheFollowers, cacheFollowing, redFlagLimit),
-    ]);
+    const redFlags = redFlagsFromLikerMap(
+      likerMap,
+      cacheFollowers,
+      cacheFollowing
+    );
+
+    scheduleCacheUpdate(username, {
+      userData: userInfo,
+      followers: cacheFollowers,
+      following: cacheFollowing,
+    });
 
     const newFollowers = followListForDisplay(followersFull, previousFollowers);
     const newFollowing = followListForDisplay(followingFull, previousFollowing);
@@ -200,7 +238,7 @@ export const getRecentActivity = async (
       totalFollowers: followersFull.length,
       totalFollowing: followingFull.length,
       processingTime: Date.now() - startTime,
-      cacheHit: Boolean(cachedData?.isFresh?.(getCacheTtlMinutes())),
+      cacheHit: fromCache,
     };
   } catch (error) {
     console.error("Error getting recent activity:", error.message);
@@ -224,17 +262,22 @@ export const getAdvancedActivity = async (
     const previousFollowing = cachedData?.following || [];
     const userId = userInfo.id || userInfo.pk;
 
-    const [{ followersData, followingData, fromCache }, stories] =
-      await Promise.all([
-        fetchFollowLists({
-          userId,
-          username,
-          searchType,
-          forPremium: true,
-          cachedData,
-        }),
-        getUserStories({ userId }),
-      ]);
+    const redFlagLimit = getRedFlagPostLimit(true);
+    const [
+      { followersData, followingData, fromCache },
+      stories,
+      likerMap,
+    ] = await Promise.all([
+      fetchFollowLists({
+        userId,
+        username,
+        searchType,
+        forPremium: true,
+        cachedData,
+      }),
+      getUserStories({ userId }),
+      fetchLikerFrequencyMap(userId, redFlagLimit),
+    ]);
 
     const followersFull =
       followersData?.followersFull ?? followersData?.followers ?? [];
@@ -248,15 +291,17 @@ export const getAdvancedActivity = async (
     const cacheFollowing =
       followingFull.length > 0 ? followingFull : previousFollowing;
 
-    const redFlagLimit = getRedFlagPostLimit(true);
-    const [, redFlags] = await Promise.all([
-      updateCache(username, {
-        userData: userInfo,
-        followers: cacheFollowers,
-        following: cacheFollowing,
-      }),
-      computeRedFlags(userId, cacheFollowers, cacheFollowing, redFlagLimit),
-    ]);
+    const redFlags = redFlagsFromLikerMap(
+      likerMap,
+      cacheFollowers,
+      cacheFollowing
+    );
+
+    scheduleCacheUpdate(username, {
+      userData: userInfo,
+      followers: cacheFollowers,
+      following: cacheFollowing,
+    });
 
     const newFollowers = followListForDisplay(followersFull, previousFollowers);
     const newFollowing = followListForDisplay(followingFull, previousFollowing);

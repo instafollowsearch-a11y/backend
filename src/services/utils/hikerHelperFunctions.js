@@ -560,7 +560,6 @@ export const analyzeRedFlags = (userData) => {
 export const getPostLikers = async (mediaId) => {
   try {
     const response = await hikerApi.get("/v2/media/likers", { params: { id: mediaId } });
-    console.log(response.data.users.length)
     return response.data.users?.map((record) => ({ ...record, postId: mediaId })) || [];
   } catch (err) {
     console.error(`Error fetching likers for media ${mediaId}:`, err.message);

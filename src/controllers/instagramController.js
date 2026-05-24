@@ -35,31 +35,6 @@ export const searchRecent = async (req, res, next) => {
       const results = await getRecentActivity(username, 'free', type);
       const processingTime = Date.now() - startTime;
 
-      // Update search entry with results
-      await searchEntry.update({
-        newFollowers: results.newFollowers,
-        newFollowing: results.newFollowing,
-        totalNewFollowers: results.totalNewFollowers,
-        totalNewFollowing: results.totalNewFollowing,
-        processingTime,
-        dataSource: 'scraper',
-        cacheHit: false,
-        lastUpdated: results.lastUpdated,
-        status: 'completed',
-        results: {
-          user: results.userInfo,
-          newFollowers: results.newFollowers,
-          newFollowing: results.newFollowing,
-          totalNewFollowers: results.totalNewFollowers,
-          totalNewFollowing: results.totalNewFollowing,
-          lastUpdated: results.lastUpdated,
-          processingTime
-        }
-      });
-
-      // No usage tracking for regular search - removed limits
-
-      // Show all results for regular search (random data for motivation)
       const fullResults = {
         user: results.userInfo,
         newFollowers: results.newFollowers,
@@ -74,7 +49,6 @@ export const searchRecent = async (req, res, next) => {
         followers: results.followers,
         following: results.following,
         followListOrder: results.followListOrder,
-        // Always show upgrade CTA for regular search
         showUpgradeCTA: true,
         message: "Upgrade to Premium for complete Instagram analytics and real-time tracking!"
       };
@@ -82,8 +56,31 @@ export const searchRecent = async (req, res, next) => {
       res.status(200).json({
         success: true,
         data: fullResults,
-        cached: false,
+        cached: Boolean(results.cacheHit),
         searchId: searchEntry.id
+      });
+
+      searchEntry.update({
+        newFollowers: results.newFollowers,
+        newFollowing: results.newFollowing,
+        totalNewFollowers: results.totalNewFollowers,
+        totalNewFollowing: results.totalNewFollowing,
+        processingTime,
+        dataSource: 'scraper',
+        cacheHit: Boolean(results.cacheHit),
+        lastUpdated: results.lastUpdated,
+        status: 'completed',
+        results: {
+          user: results.userInfo,
+          newFollowers: results.newFollowers,
+          newFollowing: results.newFollowing,
+          totalNewFollowers: results.totalNewFollowers,
+          totalNewFollowing: results.totalNewFollowing,
+          lastUpdated: results.lastUpdated,
+          processingTime
+        }
+      }).catch((err) => {
+        console.error('Search history update failed:', err.message);
       });
 
     } catch (searchError) {
