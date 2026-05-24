@@ -1,8 +1,8 @@
 import axios from "axios";
 
 const APIFY_BASE = "https://api.apify.com/v2";
-const ACTOR_FOLLOW_LISTS =
-  process.env.APIFY_FOLLOW_LISTS_ACTOR ||
+/** Only actor used for followers/following lists (thenetaji/instagram-followers-followings-scraper). */
+const THENETAJI_FOLLOW_LISTS_ACTOR =
   "thenetaji~instagram-followers-followings-scraper";
 
 const DEFAULT_TIMEOUT_MS = 120000;
@@ -129,7 +129,7 @@ const fetchFollowListFromApify = async (username, listType, maxCount) => {
     maxItem,
     profileEnriched: process.env.APIFY_PROFILE_ENRICHED === "true",
   };
-  const raw = await runActorSync(ACTOR_FOLLOW_LISTS, input);
+  const raw = await runActorSync(THENETAJI_FOLLOW_LISTS_ACTOR, input);
   const mapped = raw.map(mapApifyUser).filter(Boolean);
   return uniqueUsersInOrder(mapped);
 };
