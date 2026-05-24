@@ -195,11 +195,7 @@ export const getFollowers = async ({
     }
 
     const listMax = maxCount ?? maxLimit;
-    const apifyStart = Date.now();
     let fullList = await fetchFollowersFromApify(resolvedUsername, listMax);
-    console.log(
-      `[followers] provider=apify username=@${resolvedUsername} count=${fullList.length} ms=${Date.now() - apifyStart}`
-    );
 
     if (skipOnId) {
       const idx = fullList.findIndex((u) => String(u.id) === String(skipOnId));
@@ -269,11 +265,7 @@ export const getFollowing = async ({
     }
 
     const listMax = maxCount ?? maxLimit;
-    const apifyStart = Date.now();
     let fullList = await fetchFollowingFromApify(resolvedUsername, listMax);
-    console.log(
-      `[following] provider=apify username=@${resolvedUsername} count=${fullList.length} ms=${Date.now() - apifyStart}`
-    );
 
     if (skipOnId) {
       const idx = fullList.findIndex((u) => String(u.id) === String(skipOnId));
@@ -585,7 +577,6 @@ export const getPostLikers = async (mediaId) => {
 export const getPostComments = async (mediaId) => {
   try {
     const response = await hikerApi.get("/v2/media/comments", { params: { id: mediaId } });
-    console.log(response.data.response.comments.length)
     return response.data.response.comments?.map((record) => ({
       ...record,
       postId: mediaId
@@ -666,7 +657,6 @@ export const fetchUserMedias = async (userId, limit = 24) => {
 };
 
 export const fetchMoreUserMedias = async (userId, nextPageId) => {
-console.log(userId, nextPageId)
   try {
       const res = await hikerApi.get("/v2/user/medias", {
         params: {
@@ -675,7 +665,6 @@ console.log(userId, nextPageId)
           safe_int: true,
         },
       });
-console.log(res?.data?.response)
     return { medias: res?.data?.response?.items || [], nextPageId: res?.data?.next_page_id }
   } catch (err) {
     console.error("Error fetching medias:", err);

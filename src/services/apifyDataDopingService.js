@@ -121,15 +121,6 @@ const runActorSync = async (actorId, input) => {
   }
 };
 
-export const getApifyFollowListConfig = () => ({
-  actor: ACTOR_FOLLOW_LISTS,
-  provider: (process.env.FOLLOWERS_FOLLOWING_PROVIDER || "apify").toLowerCase(),
-  enabled: useApifyForFollowLists(),
-  publicMaxCount: getApifyListMaxCount(false),
-  premiumMaxCount: getApifyListMaxCount(true),
-  profileEnriched: process.env.APIFY_PROFILE_ENRICHED === "true",
-});
-
 const fetchFollowListFromApify = async (username, listType, maxCount) => {
   const maxItem = Math.min(Math.max(1, maxCount), 500);
   const input = {
@@ -138,9 +129,6 @@ const fetchFollowListFromApify = async (username, listType, maxCount) => {
     maxItem,
     profileEnriched: process.env.APIFY_PROFILE_ENRICHED === "true",
   };
-  console.log(
-    `[apify] actor=${ACTOR_FOLLOW_LISTS} type=${listType} maxItem=${maxItem} username=@${username}`
-  );
   const raw = await runActorSync(ACTOR_FOLLOW_LISTS, input);
   const mapped = raw.map(mapApifyUser).filter(Boolean);
   return uniqueUsersInOrder(mapped);

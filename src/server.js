@@ -20,7 +20,6 @@ import { notFound } from './middleware/notFound.js';
 
 // Import database connection
 import { connectDB } from './config/database.js';
-import { getApifyFollowListConfig } from './services/apifyDataDopingService.js';
 import './models/index.js';
 
 // Load environment variables
@@ -28,11 +27,6 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-
-const apifyFollowConfig = getApifyFollowListConfig();
-console.log(
-  `[startup] follow lists provider=${apifyFollowConfig.provider} apifyEnabled=${apifyFollowConfig.enabled} actor=${apifyFollowConfig.actor} publicMax=${apifyFollowConfig.publicMaxCount} premiumMax=${apifyFollowConfig.premiumMaxCount}`
-);
 
 // Connect to database
 connectDB();
