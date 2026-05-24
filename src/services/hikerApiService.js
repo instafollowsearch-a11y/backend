@@ -1,6 +1,9 @@
 import InstagramCache from "../models/InstagramCache.js";
-import { useApifyForFollowLists } from "./apifyDataDopingService.js";
+import { useApifyForFollowLists, getApifyListMaxCount } from "./apifyDataDopingService.js";
+import { firstPageFromFullList, LIST_PAGE_SIZE } from "./utils/listPagination.js";
 import { getUserInfo, getFollowers, getFollowing, getUserStories, updateCache, findNewUsers, getPostLikers, getPostComments, getNextFollowersData, getNextFollowingData, fetchUserMedias, fetchMoreUserMedias } from "./utils/hikerHelperFunctions.js";
+
+const LIST_STORAGE_CAP = 500;
 
 /** Apify lists are already newest-first; Hiker path keeps cache-diff "new" users. */
 const followListForDisplay = (fullList, previousList) => {
@@ -11,28 +14,152 @@ const followListForDisplay = (fullList, previousList) => {
   return findNewUsers(list, previousList);
 };
 
-export const getRecentActivity = async (username, userSubscription = 'free') => {
+const wantsFollowers = (searchType) =>
+  !searchType || searchType === "both" || searchType === "followers";
+
+const wantsFollowing = (searchType) =>
+  !searchType || searchType === "both" || searchType === "following";
+
+const getCacheTtlMinutes = () => {
+  const n = parseInt(process.env.FOLLOW_CACHE_TTL_MINUTES || "30", 10);
+  return Number.isFinite(n) && n > 0 ? n : 30;
+};
+
+const getRedFlagPostLimit = (forPremium) => {
+  const raw = forPremium
+    ? process.env.ADVANCED_RED_FLAG_POSTS ?? "6"
+    : process.env.PUBLIC_RED_FLAG_POSTS ?? "0";
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : forPremium ? 6 : 0;
+};
+
+const emptyFollowersData = () => ({
+  followers: [],
+  followersFull: [],
+  nextPageId: null,
+});
+
+const emptyFollowingData = () => ({
+  following: [],
+  followingFull: [],
+  nextPageId: null,
+});
+
+const followersDataFromCachedList = (list) => {
+  const capped = (list || []).slice(0, LIST_STORAGE_CAP);
+  const { page, nextPageId } = firstPageFromFullList(capped, LIST_PAGE_SIZE);
+  return { followers: page, followersFull: capped, nextPageId };
+};
+
+const followingDataFromCachedList = (list) => {
+  const capped = (list || []).slice(0, LIST_STORAGE_CAP);
+  const { page, nextPageId } = firstPageFromFullList(capped, LIST_PAGE_SIZE);
+  return { following: page, followingFull: capped, nextPageId };
+};
+
+const fetchFollowLists = async ({
+  userId,
+  username,
+  searchType,
+  forPremium,
+  cachedData,
+}) => {
+  const needFollowers = wantsFollowers(searchType);
+  const needFollowing = wantsFollowing(searchType);
+  const apifyMax = getApifyListMaxCount(forPremium);
+  const cacheFresh =
+    useApifyForFollowLists() &&
+    cachedData &&
+    typeof cachedData.isFresh === "function" &&
+    cachedData.isFresh(getCacheTtlMinutes());
+
+  if (
+    cacheFresh &&
+    (!needFollowers || cachedData.followers?.length) &&
+    (!needFollowing || cachedData.following?.length)
+  ) {
+    return {
+      followersData: needFollowers
+        ? followersDataFromCachedList(cachedData.followers)
+        : emptyFollowersData(),
+      followingData: needFollowing
+        ? followingDataFromCachedList(cachedData.following)
+        : emptyFollowingData(),
+      fromCache: true,
+    };
+  }
+
+  const [followersData, followingData] = await Promise.all([
+    needFollowers
+      ? getFollowers({ userId, username, fetchOnce: true, maxCount: apifyMax })
+      : Promise.resolve(emptyFollowersData()),
+    needFollowing
+      ? getFollowing({ userId, username, fetchOnce: true, maxCount: apifyMax })
+      : Promise.resolve(emptyFollowingData()),
+  ]);
+
+  return { followersData, followingData, fromCache: false };
+};
+
+const computeRedFlags = async (userId, followersFull, followingFull, postLimit) => {
+  if (!postLimit || postLimit <= 0) return [];
+
+  const userPosts = await fetchUserMedias(userId, postLimit);
+  const userPostsData = await Promise.all(
+    (userPosts?.medias || []).map(async (post) => {
+      const likers = await getPostLikers(post.id);
+      return { post, likers };
+    })
+  );
+
+  const likerMap = {};
+  for (const { likers } of userPostsData) {
+    for (const liker of likers) {
+      const likerId = liker.id ?? liker.pk;
+      if (!likerId) continue;
+      if (!likerMap[likerId]) {
+        likerMap[likerId] = { user: { ...liker }, count: 0 };
+      }
+      likerMap[likerId].count += 1;
+    }
+  }
+
+  const frequentLikers = Object.values(likerMap)
+    .filter((entry) => entry.count > 1)
+    .map((entry) => ({ ...entry.user, count: entry.count }));
+
+  const followerIds = new Set((followersFull || []).map((f) => f.id));
+  const followingIds = new Set((followingFull || []).map((f) => f.id));
+
+  return frequentLikers.filter(
+    (liker) => followerIds.has(liker.id) || followingIds.has(liker.id)
+  );
+};
+
+export const getRecentActivity = async (
+  username,
+  userSubscription = "free",
+  searchType = "both"
+) => {
   const startTime = Date.now();
   try {
-    const userInfo = await getUserInfo(username);
-
-    // Get cached data for comparison
-    let cachedData = await InstagramCache.findOne({ where: { username } });
-    let previousFollowers = [];
-    let previousFollowing = [];
-
-    if (cachedData) {
-      previousFollowers = cachedData.followers || [];
-      previousFollowing = cachedData.following || [];
-    }
-
-    // Get fresh data and stories
-    const userId = userInfo.id || userInfo.pk;
-    const [followersData, followingData, userPosts] = await Promise.all([
-      getFollowers({ userId, username, fetchOnce: true }),
-      getFollowing({ userId, username, fetchOnce: true }),
-      fetchUserMedias(userId, 12)
+    const [userInfo, cachedData] = await Promise.all([
+      getUserInfo(username),
+      InstagramCache.findOne({ where: { username } }),
     ]);
+
+    const previousFollowers = cachedData?.followers || [];
+    const previousFollowing = cachedData?.following || [];
+    const userId = userInfo.id || userInfo.pk;
+
+    const { followersData, followingData } = await fetchFollowLists({
+      userId,
+      username,
+      searchType: "both",
+      forPremium: false,
+      cachedData,
+    });
+
     const followersFull =
       followersData?.followersFull ?? followersData?.followers ?? [];
     const followingFull =
@@ -40,48 +167,23 @@ export const getRecentActivity = async (username, userSubscription = 'free') => 
     const followers = followersData?.followers ?? followersFull;
     const following = followingData?.following ?? followingFull;
 
-    // Update cache (full lists for comparison + premium load-more)
-    cachedData = await updateCache(username, {
-      userData: userInfo,
-      followers: followersFull,
-      following: followingFull,
-    });
+    const cacheFollowers =
+      followersFull.length > 0 ? followersFull : previousFollowers;
+    const cacheFollowing =
+      followingFull.length > 0 ? followingFull : previousFollowing;
+
+    const redFlagLimit = getRedFlagPostLimit(false);
+    const [, redFlags] = await Promise.all([
+      updateCache(username, {
+        userData: userInfo,
+        followers: cacheFollowers,
+        following: cacheFollowing,
+      }),
+      computeRedFlags(userId, cacheFollowers, cacheFollowing, redFlagLimit),
+    ]);
 
     const newFollowers = followListForDisplay(followersFull, previousFollowers);
     const newFollowing = followListForDisplay(followingFull, previousFollowing);
-
-    const userPostsData = await Promise.all(
-      userPosts?.medias?.map(async (post) => {
-        const likers = await getPostLikers(post.id); // returns array of user objects
-        return { post, likers };
-      })
-    );
-
-    // Map of userId → { user, count }
-    const likerMap = {};
-
-    for (const { likers } of userPostsData) {
-      for (const liker of likers) {
-        const userId = liker.id; // adjust key if needed
-        if (!likerMap[userId]) {
-          likerMap[userId] = { user: { ...liker }, count: 0 };
-        }
-        likerMap[userId].count += 1;
-      }
-    }
-
-    // Build array with full user + count
-    const frequentLikers = Object.values(likerMap)
-      .filter((entry) => entry.count > 1)
-      .map((entry) => ({ ...entry.user, count: entry.count }));
-
-    const followerIds = new Set(followersFull.map(f => f.id));
-    const followingIds = new Set(followingFull.map(f => f.id));
-
-    // Keep only frequent likers who are also in followers or following
-    const redFlags = frequentLikers.filter((liker) =>
-      followerIds.has(liker.id) || followingIds.has(liker.id)
-    );
 
     return {
       userInfo,
@@ -89,7 +191,6 @@ export const getRecentActivity = async (username, userSubscription = 'free') => 
       newFollowing,
       stories: null,
       redFlags,
-
       followers,
       following,
       followListOrder: useApifyForFollowLists() ? "chronological" : "diff",
@@ -98,99 +199,73 @@ export const getRecentActivity = async (username, userSubscription = 'free') => 
       lastUpdated: new Date(),
       totalFollowers: followersFull.length,
       totalFollowing: followingFull.length,
-      processingTime: Date.now() - startTime
+      processingTime: Date.now() - startTime,
+      cacheHit: Boolean(cachedData?.isFresh?.(getCacheTtlMinutes())),
     };
   } catch (error) {
-    console.error('Error getting recent activity:', error.message);
+    console.error("Error getting recent activity:", error.message);
     throw error;
   }
-}
+};
 
-export const getAdvancedActivity = async (username, userSubscription = 'free') => {
+export const getAdvancedActivity = async (
+  username,
+  userSubscription = "free",
+  searchType = "both"
+) => {
   const startTime = Date.now();
   try {
-    // Get user info first
-    const userInfo = await getUserInfo(username);
-
-    // Get cached data for comparison
-    let cachedData = await InstagramCache.findOne({ where: { username } });
-    let previousFollowers = [];
-    let previousFollowing = [];
-
-    if (cachedData) {
-      previousFollowers = cachedData.followers || [];
-      previousFollowing = cachedData.following || [];
-    }
-
-    // Get fresh data and stories
-    const userId = userInfo.id || userInfo.pk;
-    const [followersData, followingData, stories, userPosts] = await Promise.all([
-      getFollowers({ userId, username, fetchOnce: true }),
-      getFollowing({ userId, username, fetchOnce: true }),
-      getUserStories({ userId }),
-      fetchUserMedias(userId, 12)
+    const [userInfo, cachedData] = await Promise.all([
+      getUserInfo(username),
+      InstagramCache.findOne({ where: { username } }),
     ]);
+
+    const previousFollowers = cachedData?.followers || [];
+    const previousFollowing = cachedData?.following || [];
+    const userId = userInfo.id || userInfo.pk;
+
+    const [{ followersData, followingData, fromCache }, stories] =
+      await Promise.all([
+        fetchFollowLists({
+          userId,
+          username,
+          searchType,
+          forPremium: true,
+          cachedData,
+        }),
+        getUserStories({ userId }),
+      ]);
+
     const followersFull =
       followersData?.followersFull ?? followersData?.followers ?? [];
     const followingFull =
       followingData?.followingFull ?? followingData?.following ?? [];
-
-    // Update cache
-    cachedData = await updateCache(username, {
-      userData: userInfo,
-      followers: followersFull,
-      following: followingFull,
-    });
-
     const followers = followersData?.followers ?? followersFull;
     const following = followingData?.following ?? followingFull;
 
-    const userPostsData = await Promise.all(
-      userPosts?.medias?.map(async (post) => {
-        const likers = await getPostLikers(post.id); // returns array of user objects
-        return { post, likers };
-      })
-    );
+    const cacheFollowers =
+      followersFull.length > 0 ? followersFull : previousFollowers;
+    const cacheFollowing =
+      followingFull.length > 0 ? followingFull : previousFollowing;
 
-    // Map of userId → { user, count }
-    const likerMap = {};
-
-    for (const { likers } of userPostsData) {
-      for (const liker of likers) {
-        const userId = liker.id; // adjust key if needed
-        if (!likerMap[userId]) {
-          likerMap[userId] = { user: { ...liker }, count: 0 };
-        }
-        likerMap[userId].count += 1;
-      }
-    }
-
-    // Build array with full user + count
-    const frequentLikers = Object.values(likerMap)
-      .filter((entry) => entry.count > 1)
-      .map((entry) => ({ ...entry.user, count: entry.count }));
-
-    const followerIds = new Set(followers.map(f => f.id));
-    const followingIds = new Set(following.map(f => f.id));
-
-    // Keep only frequent likers who are also in followers or following
-    const redFlags = frequentLikers.filter((liker) =>
-      followerIds.has(liker.id) || followingIds.has(liker.id)
-    );
-
+    const redFlagLimit = getRedFlagPostLimit(true);
+    const [, redFlags] = await Promise.all([
+      updateCache(username, {
+        userData: userInfo,
+        followers: cacheFollowers,
+        following: cacheFollowing,
+      }),
+      computeRedFlags(userId, cacheFollowers, cacheFollowing, redFlagLimit),
+    ]);
 
     const newFollowers = followListForDisplay(followersFull, previousFollowers);
     const newFollowing = followListForDisplay(followingFull, previousFollowing);
-
-    // Add red flags and stories only for premium users
-
-    const premiumStories = stories;
 
     return {
       userInfo,
       newFollowers,
       newFollowing,
-      stories: premiumStories,
+      stories,
       redFlags,
       followListOrder: useApifyForFollowLists() ? "chronological" : "diff",
       totalNewFollowers: newFollowers.length,
@@ -202,13 +277,14 @@ export const getAdvancedActivity = async (username, userSubscription = 'free') =
       followersNextPageId: followersData?.nextPageId,
       followingNextPageId: followingData?.nextPageId,
       followers,
-      following
+      following,
+      cacheHit: fromCache,
     };
   } catch (error) {
-    console.error('Error getting advanced activity:', error.message);
+    console.error("Error getting advanced activity:", error.message);
     throw error;
   }
-}
+};
 
 export const getSharedActivity = async (username1, username2) => {
   const startTime = Date.now();

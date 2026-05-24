@@ -132,3 +132,14 @@ export const useApifyForFollowLists = () => {
   if (provider === "hiker") return false;
   return Boolean(process.env.APIFY_TOKEN);
 };
+
+/** Public homepage search: smaller Apify scrape (faster). Premium keeps full cap. */
+export const getApifyListMaxCount = (forPremium = false) => {
+  const cap = 500;
+  const raw = forPremium
+    ? process.env.APIFY_MAX_COUNT || "500"
+    : process.env.APIFY_PUBLIC_MAX_COUNT || "50";
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return forPremium ? cap : 50;
+  return Math.min(n, cap);
+};

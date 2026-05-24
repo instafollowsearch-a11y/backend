@@ -182,6 +182,7 @@ export const getFollowers = async ({
   username = null,
   skipOnId = null,
   fetchOnce = false,
+  maxCount = null,
 }) => {
   try {
     if (!useApifyForFollowLists()) {
@@ -193,20 +194,21 @@ export const getFollowers = async ({
       throw new Error("User not found. Please check the username and try again.");
     }
 
+    const listMax = maxCount ?? maxLimit;
     const apifyStart = Date.now();
-    let fullList = await fetchFollowersFromApify(resolvedUsername, maxLimit);
+    let fullList = await fetchFollowersFromApify(resolvedUsername, listMax);
     console.log(
       `[followers] provider=apify username=@${resolvedUsername} count=${fullList.length} ms=${Date.now() - apifyStart}`
     );
 
     if (skipOnId) {
       const idx = fullList.findIndex((u) => String(u.id) === String(skipOnId));
-      if (idx === -1 && fullList.length >= maxLimit) {
-        fullList = await fetchFollowersFromApify(resolvedUsername, maxLimit);
+      if (idx === -1 && fullList.length >= listMax) {
+        fullList = await fetchFollowersFromApify(resolvedUsername, listMax);
       }
     }
 
-    const capped = fullList.slice(0, maxLimit);
+    const capped = fullList.slice(0, listMax);
     const { page, nextPageId } = firstPageFromFullList(capped, LIST_PAGE_SIZE);
 
     return {
@@ -254,6 +256,7 @@ export const getFollowing = async ({
   username = null,
   skipOnId = null,
   fetchOnce = false,
+  maxCount = null,
 }) => {
   try {
     if (!useApifyForFollowLists()) {
@@ -265,20 +268,21 @@ export const getFollowing = async ({
       throw new Error("User not found. Please check the username and try again.");
     }
 
+    const listMax = maxCount ?? maxLimit;
     const apifyStart = Date.now();
-    let fullList = await fetchFollowingFromApify(resolvedUsername, maxLimit);
+    let fullList = await fetchFollowingFromApify(resolvedUsername, listMax);
     console.log(
       `[following] provider=apify username=@${resolvedUsername} count=${fullList.length} ms=${Date.now() - apifyStart}`
     );
 
     if (skipOnId) {
       const idx = fullList.findIndex((u) => String(u.id) === String(skipOnId));
-      if (idx === -1 && fullList.length >= maxLimit) {
-        fullList = await fetchFollowingFromApify(resolvedUsername, maxLimit);
+      if (idx === -1 && fullList.length >= listMax) {
+        fullList = await fetchFollowingFromApify(resolvedUsername, listMax);
       }
     }
 
-    const capped = fullList.slice(0, maxLimit);
+    const capped = fullList.slice(0, listMax);
     const { page, nextPageId } = firstPageFromFullList(capped, LIST_PAGE_SIZE);
 
     return {

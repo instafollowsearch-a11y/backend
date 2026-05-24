@@ -32,7 +32,7 @@ export const searchRecent = async (req, res, next) => {
     try {
       // Perform the search using regular activity (random data)
       const startTime = Date.now();
-      const results = await getRecentActivity(username, 'free');
+      const results = await getRecentActivity(username, 'free', type);
       const processingTime = Date.now() - startTime;
 
       // Update search entry with results
@@ -276,7 +276,7 @@ export const advancedSearch = async (req, res, next) => {
 
     // Perform advanced search with real data comparison
     const startTime = Date.now();
-    const results = await getAdvancedActivity(username);
+    const results = await getAdvancedActivity(username, req.user?.subscription, type);
     const processingTime = Date.now() - startTime;
 
     // Compare with previous results from database
