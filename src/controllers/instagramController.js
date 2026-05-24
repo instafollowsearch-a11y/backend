@@ -1,7 +1,8 @@
 import { validationResult } from 'express-validator';
 import rapidApiService from '../services/rapidApiService.js';
 import SearchHistory from '../models/SearchHistory.js';
-import { getAdvancedActivity, getInstagramAdmirers, getInstagramProfileDetails, getNextFollowers, getNextFollowing, getNextMedias, getRecentActivity, getSharedActivity } from '../services/hikerApiService.js';
+import { getAdvancedActivity, getInstagramAdmirers, getInstagramProfileDetails, getNextFollowers, getNextFollowing, getNextMedias, getRecentActivity, getSharedActivity, getStoryViewerProfile } from '../services/hikerApiService.js';
+import { getStoryViewerCache, setStoryViewerCache } from '../services/utils/storyViewerCache.js';
 import { getPostComentsWithCap, getPostLikers, getUserInfo } from '../services/utils/hikerHelperFunctions.js';
 
 // Search for recent followers/following - RANDOM DATA for motivation
@@ -507,6 +508,74 @@ export const getAdmirers = async (req, res, next) => {
       });
     }
 
+    next(error);
+  }
+};
+
+export const getStoryViewer = async (req, res, next) => {
+  try {
+    if (process.env.STORY_VIEWER_ENABLED === 'false') {
+      return res.status(503).json({
+        success: false,
+        error: 'Story viewer is temporarily unavailable. Please try again later.',
+      });
+    }
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array(),
+      });
+    }
+
+    const { username } = req.body;
+    const normalized = username.trim().replace(/^@+/, '');
+
+    const cached = getStoryViewerCache(normalized);
+    if (cached) {
+      return res.status(200).json({
+        success: true,
+        data: cached,
+        processingTime: 0,
+        cached: true,
+      });
+    }
+
+    const results = await getStoryViewerProfile(normalized);
+
+    if (!results.success) {
+      if (results.error?.includes('User not found')) {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found. Please check the username and try again.',
+        });
+      }
+      if (results.error?.includes('rate limit')) {
+        return res.status(429).json({
+          success: false,
+          error: 'API rate limit exceeded. Please try again in a few minutes.',
+          retryAfter: 300,
+        });
+      }
+      return res.status(500).json({
+        success: false,
+        error: results.error || 'Failed to load stories',
+      });
+    }
+
+    const storyCount = Array.isArray(results.userStories) ? results.userStories.length : 0;
+    if (storyCount > 0 || results.success) {
+      setStoryViewerCache(normalized, results);
+    }
+
+    res.status(200).json({
+      success: true,
+      data: results,
+      processingTime: results.processingTime,
+    });
+  } catch (error) {
+    console.error('Story viewer error:', error);
     next(error);
   }
 };

@@ -325,36 +325,51 @@ export const getNextFollowingData = async ({ userId, nextPageId }) => {
   }
 };
 
+const mapStoryItem = (item) => {
+  let mediaUrl = null;
+  const isVideo =
+    item.media_type === 2 ||
+    (item.video_versions && item.video_versions.length > 0);
+
+  if (item.video_versions?.length > 0) {
+    mediaUrl = item.video_versions[0].url;
+  } else if (item.image_versions2?.candidates?.length > 0) {
+    mediaUrl = item.image_versions2.candidates[0].url;
+  }
+
+  return {
+    id: item.pk || item.id,
+    mediaUrl,
+    mediaType: isVideo ? 'video' : 'image',
+    takenAt: item.taken_at,
+    expiringAt: item.expiring_at,
+    duration: item.video_duration || null,
+    viewCount: item.view_count || 0,
+    hasAudio: item.has_audio || false,
+  };
+};
+
 export const getUserStories = async ({ userId }) => {
   try {
-    const response = await hikerApi.get("/v2/user/stories", { params: { user_id: userId } });
-    return response?.data?.reel?.items?.map(item => {
-      let mediaUrl = null;
-
-      // Определяем URL медиа (фото или видео)
-      if (item.video_versions && item.video_versions.length > 0) {
-        // Видео
-        mediaUrl = item.video_versions[0].url;
-      } else if (item.image_versions2 && item.image_versions2.candidates && item.image_versions2.candidates.length > 0) {
-        // Фото
-        mediaUrl = item.image_versions2.candidates[0].url;
-      }
-
-      return {
-        id: item.pk,
-        mediaUrl,
-        mediaType: item.video_versions ? 'video' : 'image',
-        takenAt: item.taken_at,
-        expiringAt: item.expiring_at,
-        duration: item.video_duration || null,
-        viewCount: item.view_count || 0,
-        hasAudio: item.has_audio || false
-      };
+    const response = await hikerApi.get("/v2/user/stories", {
+      params: { user_id: userId },
     });
+    const data = response?.data;
+    const items =
+      data?.reel?.items ??
+      data?.items ??
+      (Array.isArray(data?.reel) ? data.reel : null);
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return [];
+    }
+
+    return items.map(mapStoryItem).filter((s) => s.mediaUrl);
   } catch (error) {
-    handleApiError(error, 'getting following');
+    console.error("Error getting user stories:", error.message);
+    return [];
   }
-}
+};
 
 export const updateCache = async (username, data) => {
   try {

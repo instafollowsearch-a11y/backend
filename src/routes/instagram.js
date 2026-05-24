@@ -12,11 +12,13 @@ import {
   nextFollowing,
   getAdmirers,
   getInstagramProfile,
+  getStoryViewer,
   nextMedias,
   getMediaLikers,
   getMediaComments
 } from '../controllers/instagramController.js';
 import { protect, authorize, optionalAuth } from '../middleware/auth.js';
+import { storyViewerLimiter } from '../middleware/storyViewerLimiter.js';
 import axios from 'axios'; // Added axios import
 
 const router = express.Router();
@@ -32,6 +34,14 @@ const searchValidation = [
     .optional()
     .isIn(['followers', 'following', 'both'])
     .withMessage('Type must be followers, following, or both')
+];
+
+const storyViewerValidation = [
+  body('username')
+    .isLength({ min: 1, max: 30 })
+    .withMessage('Username must be between 1 and 30 characters')
+    .matches(/^[a-zA-Z0-9._]+$/)
+    .withMessage('Username can only contain letters, numbers, dots, and underscores'),
 ];
 
 const usernameValidation = [
@@ -83,6 +93,13 @@ router.post('/next-following', protect, nextFollowing);
 router.post('/next-medias', protect, nextMedias);
 router.post('/admirers', optionalAuth, getAdmirers);
 router.post('/view-profile', optionalAuth, getInstagramProfile);
+router.post(
+  '/story-viewer',
+  storyViewerLimiter,
+  optionalAuth,
+  storyViewerValidation,
+  getStoryViewer
+);
 router.post('/media-likers', protect, getMediaLikers);
 router.post('/media-comments', protect, getMediaComments);
 

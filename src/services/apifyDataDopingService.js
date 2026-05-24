@@ -1,8 +1,9 @@
 import axios from "axios";
 
 const APIFY_BASE = "https://api.apify.com/v2";
-const ACTOR_FOLLOWERS = "datadoping~instagram-followers-scraper";
-const ACTOR_FOLLOWING = "datadoping~instagram-following-scraper";
+const ACTOR_FOLLOW_LISTS =
+  process.env.APIFY_FOLLOW_LISTS_ACTOR ||
+  "thenetaji~instagram-followers-followings-scraper";
 
 const DEFAULT_TIMEOUT_MS = 120000;
 
@@ -23,16 +24,29 @@ const mapApifyUser = (item) => {
     username,
     fullName: item.full_name ?? item.fullName ?? item.fullname ?? "",
     profilePicUrl:
-      item.profile_pic_url ?? item.profilePicUrl ?? item.profile_picture ?? "",
+      item.profile_pic_url ??
+      item.profile_pic_url_hd ??
+      item.profilePicUrl ??
+      item.profile_picture ??
+      "",
     isVerified: Boolean(item.is_verified ?? item.isVerified),
     isPrivate: Boolean(item.is_private ?? item.isPrivate),
-    followerCount: item.follower_count ?? item.followerCount,
-    followingCount: item.following_count ?? item.followingCount,
+    followerCount:
+      item.edge_followed_by?.count ??
+      item.follower_count ??
+      item.followerCount,
+    followingCount:
+      item.edge_follow?.count ??
+      item.following_count ??
+      item.followingCount,
     mediaCount: item.media_count ?? item.mediaCount,
     biography: item.biography ?? "",
     externalUrl: item.external_url ?? item.externalUrl ?? "",
     full_name: item.full_name ?? item.fullName,
-    profile_pic_url: item.profile_pic_url ?? item.profilePicUrl,
+    profile_pic_url:
+      item.profile_pic_url ??
+      item.profile_pic_url_hd ??
+      item.profilePicUrl,
     is_verified: item.is_verified ?? item.isVerified,
     is_private: item.is_private ?? item.isPrivate,
   };
@@ -107,25 +121,24 @@ const runActorSync = async (actorId, input) => {
   }
 };
 
-export const fetchFollowersFromApify = async (username, maxCount) => {
+const fetchFollowListFromApify = async (username, listType, maxCount) => {
+  const maxItem = Math.min(Math.max(1, maxCount), 500);
   const input = {
-    usernames: [username],
-    max_count: Math.min(Math.max(1, maxCount), 500),
+    username: [username],
+    type: listType,
+    maxItem,
+    profileEnriched: process.env.APIFY_PROFILE_ENRICHED === "true",
   };
-  const raw = await runActorSync(ACTOR_FOLLOWERS, input);
+  const raw = await runActorSync(ACTOR_FOLLOW_LISTS, input);
   const mapped = raw.map(mapApifyUser).filter(Boolean);
   return uniqueUsersInOrder(mapped);
 };
 
-export const fetchFollowingFromApify = async (username, maxCount) => {
-  const input = {
-    usernames: [username],
-    max_count: Math.min(Math.max(1, maxCount), 500),
-  };
-  const raw = await runActorSync(ACTOR_FOLLOWING, input);
-  const mapped = raw.map(mapApifyUser).filter(Boolean);
-  return uniqueUsersInOrder(mapped);
-};
+export const fetchFollowersFromApify = async (username, maxCount) =>
+  fetchFollowListFromApify(username, "followers", maxCount);
+
+export const fetchFollowingFromApify = async (username, maxCount) =>
+  fetchFollowListFromApify(username, "followings", maxCount);
 
 export const useApifyForFollowLists = () => {
   const provider = (process.env.FOLLOWERS_FOLLOWING_PROVIDER || "apify").toLowerCase();

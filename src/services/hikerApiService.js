@@ -551,6 +551,11 @@ export const getInstagramAdmirers = async (username) => {
   }
 };
 
+/** Full profile payload (same shape as view-profile) for the standalone story site. */
+export const getStoryViewerProfile = async (username) => {
+  return getInstagramProfileDetails(username);
+};
+
 export const getInstagramProfileDetails = async (username) => {
   const startTime = Date.now();
   
