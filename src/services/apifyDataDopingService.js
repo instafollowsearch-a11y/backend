@@ -146,13 +146,13 @@ export const useApifyForFollowLists = () => {
   return Boolean(process.env.APIFY_TOKEN);
 };
 
-/** Public homepage search: smaller Apify scrape (faster). Premium keeps full cap. */
+/** Public search: small scrape. Premium: max items stored in cache (load more in pages of FOLLOW_LIST_PAGE_SIZE). */
 export const getApifyListMaxCount = (forPremium = false) => {
-  const cap = 500;
+  const cap = forPremium ? 500 : 50;
   const raw = forPremium
-    ? process.env.APIFY_MAX_COUNT || "500"
-    : process.env.APIFY_PUBLIC_MAX_COUNT || "50";
+    ? process.env.APIFY_MAX_COUNT || "50"
+    : process.env.APIFY_PUBLIC_MAX_COUNT || "2";
   const n = parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 1) return forPremium ? cap : 50;
+  if (!Number.isFinite(n) || n < 1) return forPremium ? 50 : 2;
   return Math.min(n, cap);
 };

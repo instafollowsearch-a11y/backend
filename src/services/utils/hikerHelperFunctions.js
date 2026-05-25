@@ -6,7 +6,7 @@ import {
   useApifyForFollowLists,
 } from "../apifyDataDopingService.js";
 import {
-  LIST_PAGE_SIZE,
+  getListPageSize,
   sliceListPage,
   firstPageFromFullList,
 } from "./listPagination.js";
@@ -205,7 +205,7 @@ export const getFollowers = async ({
     }
 
     const capped = fullList.slice(0, listMax);
-    const { page, nextPageId } = firstPageFromFullList(capped, LIST_PAGE_SIZE);
+    const { page, nextPageId } = firstPageFromFullList(capped, getListPageSize());
 
     return {
       followers: fetchOnce ? page : capped,
@@ -238,7 +238,7 @@ export const getNextFollowersData = async ({ userId, nextPageId }) => {
     const { items, nextPageId: next } = sliceListPage(
       cache.followers,
       nextPageId,
-      LIST_PAGE_SIZE
+      getListPageSize()
     );
     return { followers: items, nextPageId: next };
   } catch (error) {
@@ -275,7 +275,7 @@ export const getFollowing = async ({
     }
 
     const capped = fullList.slice(0, listMax);
-    const { page, nextPageId } = firstPageFromFullList(capped, LIST_PAGE_SIZE);
+    const { page, nextPageId } = firstPageFromFullList(capped, getListPageSize());
 
     return {
       following: fetchOnce ? page : capped,
@@ -308,7 +308,7 @@ export const getNextFollowingData = async ({ userId, nextPageId }) => {
     const { items, nextPageId: next } = sliceListPage(
       cache.following,
       nextPageId,
-      LIST_PAGE_SIZE
+      getListPageSize()
     );
     return { following: items, nextPageId: next };
   } catch (error) {

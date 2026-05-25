@@ -602,7 +602,8 @@ export const getInstagramProfile = async (req, res, next) => {
 
     // Perform advanced search with real data comparison
     const startTime = Date.now();
-    const results = await getInstagramProfileDetails(username);
+    const forPremium = Boolean(req.user?.subscription);
+    const results = await getInstagramProfileDetails(username, { forPremium });
     const processingTime = Date.now() - startTime;
 
     res.status(200).json({

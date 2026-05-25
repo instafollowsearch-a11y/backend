@@ -1,9 +1,10 @@
 import InstagramCache from "../models/InstagramCache.js";
 import { useApifyForFollowLists, getApifyListMaxCount } from "./apifyDataDopingService.js";
-import { firstPageFromFullList, LIST_PAGE_SIZE } from "./utils/listPagination.js";
+import { firstPageFromFullList, getListPageSize } from "./utils/listPagination.js";
 import { getUserInfo, getFollowers, getFollowing, getUserStories, updateCache, findNewUsers, getPostLikers, getPostComments, getNextFollowersData, getNextFollowingData, fetchUserMedias, fetchMoreUserMedias } from "./utils/hikerHelperFunctions.js";
 
-const LIST_STORAGE_CAP = 500;
+const listStorageCap = (forPremium) =>
+  Math.min(getApifyListMaxCount(forPremium), 500);
 
 /** Apify lists are already newest-first; Hiker path keeps cache-diff "new" users. */
 const followListForDisplay = (fullList, previousList) => {
@@ -45,15 +46,17 @@ const emptyFollowingData = () => ({
   nextPageId: null,
 });
 
-const followersDataFromCachedList = (list) => {
-  const capped = (list || []).slice(0, LIST_STORAGE_CAP);
-  const { page, nextPageId } = firstPageFromFullList(capped, LIST_PAGE_SIZE);
+const followersDataFromCachedList = (list, forPremium = true) => {
+  const capped = (list || []).slice(0, listStorageCap(forPremium));
+  const pageSize = getListPageSize();
+  const { page, nextPageId } = firstPageFromFullList(capped, pageSize);
   return { followers: page, followersFull: capped, nextPageId };
 };
 
-const followingDataFromCachedList = (list) => {
-  const capped = (list || []).slice(0, LIST_STORAGE_CAP);
-  const { page, nextPageId } = firstPageFromFullList(capped, LIST_PAGE_SIZE);
+const followingDataFromCachedList = (list, forPremium = true) => {
+  const capped = (list || []).slice(0, listStorageCap(forPremium));
+  const pageSize = getListPageSize();
+  const { page, nextPageId } = firstPageFromFullList(capped, pageSize);
   return { following: page, followingFull: capped, nextPageId };
 };
 
@@ -80,10 +83,10 @@ const fetchFollowLists = async ({
   ) {
     return {
       followersData: needFollowers
-        ? followersDataFromCachedList(cachedData.followers)
+        ? followersDataFromCachedList(cachedData.followers, forPremium)
         : emptyFollowersData(),
       followingData: needFollowing
-        ? followingDataFromCachedList(cachedData.following)
+        ? followingDataFromCachedList(cachedData.following, forPremium)
         : emptyFollowingData(),
       fromCache: true,
     };
@@ -551,22 +554,61 @@ export const getInstagramAdmirers = async (username) => {
   }
 };
 
-/** Full profile payload (same shape as view-profile) for the standalone story site. */
+/** Story site: profile, posts, stories only — no Apify followers/following (tabs funnel to main site). */
 export const getStoryViewerProfile = async (username) => {
-  return getInstagramProfileDetails(username);
+  const startTime = Date.now();
+  const postLimit = (() => {
+    const n = parseInt(process.env.STORY_VIEWER_POST_LIMIT || "9", 10);
+    return Number.isFinite(n) && n > 0 ? n : 9;
+  })();
+
+  try {
+    const userinfo = await getUserInfo(username);
+    const userId = userinfo.id || userinfo.pk;
+    const [userPosts, userStories] = await Promise.all([
+      fetchUserMedias(userId, postLimit),
+      getUserStories({ userId }),
+    ]);
+
+    return {
+      success: true,
+      userinfo,
+      userPosts,
+      userStories,
+      userFollowers: { followers: [], nextPageId: null },
+      userFollowing: { following: [], nextPageId: null },
+      totalPosts: Array.isArray(userPosts?.medias) ? userPosts.medias.length : 0,
+      processingTime: Date.now() - startTime,
+    };
+  } catch (error) {
+    console.error("Error getting story viewer profile:", error.message);
+
+    return {
+      success: false,
+      error: error.message,
+      userinfo: null,
+      userPosts: [],
+      userStories: null,
+      userFollowers: null,
+      userFollowing: null,
+      totalPosts: 0,
+      processingTime: Date.now() - startTime,
+    };
+  }
 };
 
-export const getInstagramProfileDetails = async (username) => {
+export const getInstagramProfileDetails = async (username, { forPremium = false } = {}) => {
   const startTime = Date.now();
-  
+  const listMax = getApifyListMaxCount(forPremium);
+
   try {
     const userinfo = await getUserInfo(username);
     const userId = userinfo.id || userinfo.pk;
     const [userPosts, userStories, userFollowers, userFollowing] = await Promise.all([
       fetchUserMedias(userId, 24),
       getUserStories({ userId }),
-      getFollowers({ userId, username, fetchOnce: true }),
-      getFollowing({ userId, username, fetchOnce: true })
+      getFollowers({ userId, username, fetchOnce: true, maxCount: listMax }),
+      getFollowing({ userId, username, fetchOnce: true, maxCount: listMax }),
     ]);
 
     return {

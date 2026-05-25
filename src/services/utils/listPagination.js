@@ -1,5 +1,12 @@
-/** Page size for followers/following UI "load more" (matches Apify default batch). */
-export const LIST_PAGE_SIZE = 50;
+/** Items returned per "Load more" click (UI page size). */
+export const getListPageSize = () => {
+  const n = parseInt(process.env.FOLLOW_LIST_PAGE_SIZE || "10", 10);
+  if (!Number.isFinite(n) || n < 1) return 10;
+  return Math.min(n, 50);
+};
+
+/** @deprecated Use getListPageSize() — kept for tests importing LIST_PAGE_SIZE */
+export const LIST_PAGE_SIZE = 10;
 
 export const OFFSET_PREFIX = "offset:";
 
@@ -16,7 +23,6 @@ export const parseOffsetToken = (token) => {
     const n = parseInt(s.slice(OFFSET_PREFIX.length), 10);
     return Number.isFinite(n) && n >= 0 ? n : 0;
   }
-  // Legacy Hiker cursor: treat as start of list (re-fetch from cache at 0 not possible)
   return 0;
 };
 
@@ -24,10 +30,11 @@ export const parseOffsetToken = (token) => {
  * Slice a cached list for pagination.
  * @returns {{ items: array, nextPageId: string|null }}
  */
-export const sliceListPage = (list, offsetToken, pageSize = LIST_PAGE_SIZE) => {
+export const sliceListPage = (list, offsetToken, pageSize) => {
+  const size = pageSize ?? getListPageSize();
   const listArr = Array.isArray(list) ? list : [];
   const offset = parseOffsetToken(offsetToken);
-  const end = offset + pageSize;
+  const end = offset + size;
   const items = listArr.slice(offset, end);
   const nextOffset = end;
   const nextPageId =
@@ -38,9 +45,10 @@ export const sliceListPage = (list, offsetToken, pageSize = LIST_PAGE_SIZE) => {
 /**
  * First page + token for remaining items in a full list.
  */
-export const firstPageFromFullList = (fullList, pageSize = LIST_PAGE_SIZE) => {
+export const firstPageFromFullList = (fullList, pageSize) => {
+  const size = pageSize ?? getListPageSize();
   const list = Array.isArray(fullList) ? fullList : [];
   const nextPageId =
-    list.length > pageSize ? buildOffsetToken(pageSize) : null;
-  return { page: list.slice(0, pageSize), nextPageId, fullList: list };
+    list.length > size ? buildOffsetToken(size) : null;
+  return { page: list.slice(0, size), nextPageId, fullList: list };
 };
