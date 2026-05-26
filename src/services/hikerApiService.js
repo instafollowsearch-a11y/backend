@@ -32,10 +32,17 @@ const profileCount = (userInfo, ...keys) => {
   return 0;
 };
 
-const assertListWhenProfileHasCount = (list, profileCountValue, label) => {
+const assertListWhenProfileHasCount = (
+  list,
+  profileCountValue,
+  label,
+  username = ""
+) => {
   if (profileCountValue > 0 && (!list || list.length === 0)) {
+    const provider = useApifyForFollowLists() ? "Apify" : "Hiker";
+    const handle = username ? `@${username}` : "this account";
     throw new Error(
-      `Could not load ${label}. Please try again in a few minutes.`
+      `Could not load ${label} for ${handle}: profile shows ${profileCountValue} but ${provider} returned 0 users. Check APIFY_TOKEN / HIKER_API_KEY on Render, Apify credits, or retry in a few minutes.`
     );
   }
 };
@@ -148,14 +155,16 @@ const fetchFollowLists = async ({
       assertListWhenProfileHasCount(
         followersFull,
         profileCount(userInfo, "followerCount", "follower_count"),
-        "recent followers"
+        "recent followers",
+        username
       );
     }
     if (needFollowing) {
       assertListWhenProfileHasCount(
         followingFull,
         profileCount(userInfo, "followingCount", "following_count"),
-        "recent following"
+        "recent following",
+        username
       );
     }
   }

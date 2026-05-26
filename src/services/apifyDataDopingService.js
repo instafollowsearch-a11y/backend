@@ -154,14 +154,31 @@ export const assertApifyConfigured = () => {
 };
 
 const fetchFollowListWithRetry = async (username, listType, maxCount) => {
-  const attempts = Math.max(1, parseInt(process.env.APIFY_LIST_RETRY_ATTEMPTS || "2", 10));
+  const attempts = Math.max(
+    1,
+    parseInt(process.env.APIFY_LIST_RETRY_ATTEMPTS || "2", 10)
+  );
+  const maxItem = Math.min(Math.max(1, maxCount), 500);
   let last = [];
+  let lastApifyError = null;
+
   for (let attempt = 0; attempt < attempts; attempt++) {
-    last = await fetchFollowListFromApify(username, listType, maxCount);
-    if (last.length > 0) return last;
+    try {
+      last = await fetchFollowListFromApify(username, listType, maxCount);
+      if (last.length > 0) return last;
+    } catch (err) {
+      lastApifyError = err.message || String(err);
+      if (attempt >= attempts - 1) throw err;
+    }
     if (attempt < attempts - 1) await sleep(APIFY_RETRY_DELAY_MS);
   }
-  return last;
+
+  const detail = lastApifyError
+    ? ` Last Apify error: ${lastApifyError}`
+    : "";
+  throw new Error(
+    `Apify ${listType} scrape returned 0 users for @${username} after ${attempts} attempt(s) (maxItem=${maxItem}, actor=${THENETAJI_FOLLOW_LISTS_ACTOR}).${detail} Check Apify token, credits, and run history in the Apify console.`
+  );
 };
 
 export const fetchFollowersFromApify = async (username, maxCount) =>

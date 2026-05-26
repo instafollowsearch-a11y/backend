@@ -94,7 +94,31 @@ export const searchRecent = async (req, res, next) => {
     }
 
   } catch (error) {
-    next(error);
+    if (error.message?.includes("rate limit exceeded")) {
+      return res.status(429).json({
+        success: false,
+        error:
+          "API rate limit exceeded. Please try again in a few minutes or upgrade your plan for higher limits.",
+        retryAfter: 300,
+      });
+    }
+    if (error.message?.includes("User not found")) {
+      return res.status(404).json({
+        success: false,
+        error: "User not found. Please check the username and try again.",
+      });
+    }
+    if (error.message?.includes("temporarily unavailable")) {
+      return res.status(503).json({
+        success: false,
+        error:
+          "Instagram API is temporarily unavailable. Please try again later.",
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Search failed. Please try again.",
+    });
   }
 };
 
@@ -385,7 +409,10 @@ export const advancedSearch = async (req, res, next) => {
       });
     }
 
-    next(error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Advanced search failed. Please try again.',
+    });
   }
 };
 
