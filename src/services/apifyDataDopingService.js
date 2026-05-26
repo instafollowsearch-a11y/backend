@@ -16,7 +16,16 @@ const apifyErrorPayload = (data) => {
   };
 };
 
-const errorTypeHint = (type) => {
+const LIST_UNAVAILABLE =
+  "Follower lists are temporarily unavailable. Please try again later.";
+const LIST_USAGE_LIMIT =
+  "We could not load this list right now. Our service limit may have been reached. Please try again later or contact support.";
+const LIST_RATE_LIMIT =
+  "Too many requests. Please wait a few minutes and try again.";
+const LIST_TIMEOUT =
+  "This request took too long. Please try again.";
+
+const userMessageFromErrorType = (type) => {
   const t = String(type || "").toLowerCase();
   if (
     t.includes("credit") ||
@@ -24,97 +33,76 @@ const errorTypeHint = (type) => {
     t.includes("payment") ||
     t.includes("402") ||
     t.includes("billing") ||
-    t.includes("invoice")
+    t.includes("invoice") ||
+    t.includes("apify-plan-required")
   ) {
-    return "credits or billing issue";
+    return LIST_USAGE_LIMIT;
   }
-  if (t.includes("invalid-token") || t.includes("token")) {
-    return "invalid APIFY_TOKEN";
+  if (t.includes("rate-limit")) return LIST_RATE_LIMIT;
+  if (
+    t.includes("invalid-token") ||
+    t.includes("insufficient-permissions") ||
+    t.includes("token")
+  ) {
+    return LIST_UNAVAILABLE;
   }
-  if (t.includes("actor-not-found")) return "actor not found";
-  if (t.includes("actor-run-failed")) return "actor run failed";
-  if (t.includes("rate-limit")) return "rate limited";
-  if (t.includes("insufficient-permissions")) return "token lacks permission";
-  if (t.includes("apify-plan-required")) return "paid Apify plan required";
   return null;
 };
 
-const describeApifyHttpError = (status, data) => {
-  const { type, message } = apifyErrorPayload(data);
-  const parts = [];
-
-  if (status === 402) {
-    parts.push(
-      "Apify payment required — account may be out of credits or over the monthly usage limit."
-    );
-  } else if (status === 401) {
-    parts.push("Apify authentication failed — APIFY_TOKEN is invalid or expired.");
-  } else if (status === 403) {
-    parts.push(
-      "Apify access denied — token may lack permission or actor access is blocked."
-    );
-  } else if (status === 429) {
-    parts.push("Apify rate limit exceeded — wait and retry.");
-  } else if (status === 404) {
-    parts.push(`Apify actor not found (${THENETAJI_FOLLOW_LISTS_ACTOR}).`);
-  } else if (status >= 400) {
-    parts.push(`Apify HTTP ${status}.`);
-  }
-
-  if (type) {
-    const hint = errorTypeHint(type);
-    parts.push(
-      hint ? `Apify type: ${type} (${hint}).` : `Apify type: ${type}.`
-    );
-  }
-  if (message) parts.push(`Apify says: ${message}`);
-
-  return parts.join(" ");
+const userMessageFromHttpStatus = (status) => {
+  if (status === 402) return LIST_USAGE_LIMIT;
+  if (status === 401 || status === 403 || status === 404) return LIST_UNAVAILABLE;
+  if (status === 429) return LIST_RATE_LIMIT;
+  if (status >= 400) return LIST_UNAVAILABLE;
+  return null;
 };
 
-const fetchApifyAccountUsageHint = async (token) => {
-  if (!token) return null;
+const toUserFacingListError = (status, data) => {
+  const { type } = apifyErrorPayload(data);
+  return (
+    (type && userMessageFromErrorType(type)) ||
+    (status && userMessageFromHttpStatus(status)) ||
+    LIST_UNAVAILABLE
+  );
+};
+
+const isUserFacingListError = (message) => {
+  const m = String(message || "");
+  return (
+    m === LIST_UNAVAILABLE ||
+    m === LIST_USAGE_LIMIT ||
+    m === LIST_RATE_LIMIT ||
+    m === LIST_TIMEOUT ||
+    m.startsWith("We could not load recent ")
+  );
+};
+
+const fetchAccountAtUsageLimit = async (token) => {
+  if (!token) return false;
   try {
     const res = await axios.get(`${APIFY_BASE}/users/me/limits`, {
       params: { token },
       timeout: 15000,
       validateStatus: (s) => s < 500,
     });
-    if (res.status >= 400) {
-      return describeApifyHttpError(res.status, res.data) || null;
-    }
+    if (res.status >= 400) return res.status === 402;
     const limits = res.data?.data?.limits;
     const current = res.data?.data?.current;
-    if (!limits || !current) return null;
-
-    const used = current.monthlyUsageUsd;
-    const max = limits.maxMonthlyUsageUsd;
-    if (typeof used !== "number" || typeof max !== "number") return null;
-
-    const atLimit = used >= max;
-    return `Apify billing: $${used.toFixed(2)} of $${max.toFixed(2)} monthly limit used${atLimit ? " — limit reached, add credits in Apify console" : ""}.`;
+    const used = current?.monthlyUsageUsd;
+    const max = limits?.maxMonthlyUsageUsd;
+    if (typeof used !== "number" || typeof max !== "number") return false;
+    return used >= max;
   } catch {
-    return null;
+    return false;
   }
 };
 
-const buildEmptyScrapeError = async ({
-  username,
-  listType,
-  attempts,
-  maxItem,
-  lastApifyError,
-}) => {
-  const usageHint = await fetchApifyAccountUsageHint(process.env.APIFY_TOKEN);
-  const parts = [
-    `Apify ${listType} scrape returned 0 users for @${username} after ${attempts} attempt(s) (maxItem=${maxItem}, actor=${THENETAJI_FOLLOW_LISTS_ACTOR}).`,
-  ];
-  if (lastApifyError) parts.push(lastApifyError);
-  if (usageHint) parts.push(usageHint);
-  parts.push(
-    "Likely causes: private/restricted Instagram account, scraper blocked, actor failure, or no Apify credits. Open console.apify.com → Runs for this actor to see the exact run log."
-  );
-  return parts.join(" ");
+const buildEmptyScrapeError = async ({ username, listType }) => {
+  if (await fetchAccountAtUsageLimit(process.env.APIFY_TOKEN)) {
+    return LIST_USAGE_LIMIT;
+  }
+  const label = listType === "followings" ? "following" : "followers";
+  return `We could not load recent ${label} for @${username}. The account may be private, restricted, or unavailable right now. Please try again in a few minutes.`;
 };
 
 const mapApifyUser = (item) => {
@@ -184,9 +172,7 @@ const uniqueUsersInOrder = (users = []) => {
 const runActorSync = async (actorId, input) => {
   const token = process.env.APIFY_TOKEN;
   if (!token) {
-    throw new Error(
-      "Apify is not configured — APIFY_TOKEN is missing on the server."
-    );
+    throw new Error(LIST_UNAVAILABLE);
   }
 
   const url = `${APIFY_BASE}/acts/${actorId}/run-sync-get-dataset-items`;
@@ -199,8 +185,7 @@ const runActorSync = async (actorId, input) => {
     });
 
     if (response.status >= 400) {
-      const detail = describeApifyHttpError(response.status, response.data);
-      throw new Error(detail || `Apify request failed (HTTP ${response.status}).`);
+      throw new Error(toUserFacingListError(response.status, response.data));
     }
 
     const data = response.data;
@@ -209,24 +194,19 @@ const runActorSync = async (actorId, input) => {
     }
     return data;
   } catch (error) {
-    if (error.message?.startsWith("Apify ")) throw error;
+    if (isUserFacingListError(error.message)) throw error;
 
     if (error.code === "ECONNABORTED") {
-      throw new Error(
-        "Apify request timed out after 120s — try again or lower maxItem."
-      );
+      throw new Error(LIST_TIMEOUT);
     }
 
     const status = error.response?.status;
     const body = error.response?.data;
     if (status) {
-      const detail = describeApifyHttpError(status, body);
-      throw new Error(detail || `Apify request failed (HTTP ${status}).`);
+      throw new Error(toUserFacingListError(status, body));
     }
 
-    throw new Error(
-      `Apify request failed: ${error.message || "unknown network error"}.`
-    );
+    throw new Error(LIST_UNAVAILABLE);
   }
 };
 
@@ -256,9 +236,7 @@ export const useApifyForFollowLists = () => !isHikerFollowListProvider();
 export const assertApifyConfigured = () => {
   if (isHikerFollowListProvider()) return;
   if (!process.env.APIFY_TOKEN) {
-    throw new Error(
-      "Apify is not configured — APIFY_TOKEN is missing on the server."
-    );
+    throw new Error(LIST_UNAVAILABLE);
   }
 };
 
@@ -267,30 +245,23 @@ const fetchFollowListWithRetry = async (username, listType, maxCount) => {
     1,
     parseInt(process.env.APIFY_LIST_RETRY_ATTEMPTS || "2", 10)
   );
-  const maxItem = Math.min(Math.max(1, maxCount), 500);
   let last = [];
-  let lastApifyError = null;
 
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       last = await fetchFollowListFromApify(username, listType, maxCount);
       if (last.length > 0) return last;
     } catch (err) {
-      lastApifyError = err.message || String(err);
-      if (attempt >= attempts - 1) throw err;
+      if (attempt >= attempts - 1) {
+        throw new Error(
+          isUserFacingListError(err.message) ? err.message : LIST_UNAVAILABLE
+        );
+      }
     }
     if (attempt < attempts - 1) await sleep(APIFY_RETRY_DELAY_MS);
   }
 
-  throw new Error(
-    await buildEmptyScrapeError({
-      username,
-      listType,
-      attempts,
-      maxItem,
-      lastApifyError,
-    })
-  );
+  throw new Error(await buildEmptyScrapeError({ username, listType }));
 };
 
 export const fetchFollowersFromApify = async (username, maxCount) =>

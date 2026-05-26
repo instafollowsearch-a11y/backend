@@ -39,10 +39,9 @@ const assertListWhenProfileHasCount = (
   username = ""
 ) => {
   if (profileCountValue > 0 && (!list || list.length === 0)) {
-    const provider = useApifyForFollowLists() ? "Apify" : "Hiker";
     const handle = username ? `@${username}` : "this account";
     throw new Error(
-      `Could not load ${label} for ${handle}: profile shows ${profileCountValue} but ${provider} returned 0 users. Check APIFY_TOKEN / HIKER_API_KEY on Render, Apify credits, or retry in a few minutes.`
+      `We could not load recent ${label} for ${handle}. Please try again in a few minutes.`
     );
   }
 };
