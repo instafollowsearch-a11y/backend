@@ -7,6 +7,116 @@ const THENETAJI_FOLLOW_LISTS_ACTOR =
 
 const DEFAULT_TIMEOUT_MS = 120000;
 
+const apifyErrorPayload = (data) => {
+  if (!data || typeof data !== "object") return { type: null, message: null };
+  const err = data.error && typeof data.error === "object" ? data.error : data;
+  return {
+    type: err.type ?? null,
+    message: err.message ?? data.message ?? null,
+  };
+};
+
+const errorTypeHint = (type) => {
+  const t = String(type || "").toLowerCase();
+  if (
+    t.includes("credit") ||
+    t.includes("usage-limit") ||
+    t.includes("payment") ||
+    t.includes("402") ||
+    t.includes("billing") ||
+    t.includes("invoice")
+  ) {
+    return "credits or billing issue";
+  }
+  if (t.includes("invalid-token") || t.includes("token")) {
+    return "invalid APIFY_TOKEN";
+  }
+  if (t.includes("actor-not-found")) return "actor not found";
+  if (t.includes("actor-run-failed")) return "actor run failed";
+  if (t.includes("rate-limit")) return "rate limited";
+  if (t.includes("insufficient-permissions")) return "token lacks permission";
+  if (t.includes("apify-plan-required")) return "paid Apify plan required";
+  return null;
+};
+
+const describeApifyHttpError = (status, data) => {
+  const { type, message } = apifyErrorPayload(data);
+  const parts = [];
+
+  if (status === 402) {
+    parts.push(
+      "Apify payment required — account may be out of credits or over the monthly usage limit."
+    );
+  } else if (status === 401) {
+    parts.push("Apify authentication failed — APIFY_TOKEN is invalid or expired.");
+  } else if (status === 403) {
+    parts.push(
+      "Apify access denied — token may lack permission or actor access is blocked."
+    );
+  } else if (status === 429) {
+    parts.push("Apify rate limit exceeded — wait and retry.");
+  } else if (status === 404) {
+    parts.push(`Apify actor not found (${THENETAJI_FOLLOW_LISTS_ACTOR}).`);
+  } else if (status >= 400) {
+    parts.push(`Apify HTTP ${status}.`);
+  }
+
+  if (type) {
+    const hint = errorTypeHint(type);
+    parts.push(
+      hint ? `Apify type: ${type} (${hint}).` : `Apify type: ${type}.`
+    );
+  }
+  if (message) parts.push(`Apify says: ${message}`);
+
+  return parts.join(" ");
+};
+
+const fetchApifyAccountUsageHint = async (token) => {
+  if (!token) return null;
+  try {
+    const res = await axios.get(`${APIFY_BASE}/users/me/limits`, {
+      params: { token },
+      timeout: 15000,
+      validateStatus: (s) => s < 500,
+    });
+    if (res.status >= 400) {
+      return describeApifyHttpError(res.status, res.data) || null;
+    }
+    const limits = res.data?.data?.limits;
+    const current = res.data?.data?.current;
+    if (!limits || !current) return null;
+
+    const used = current.monthlyUsageUsd;
+    const max = limits.maxMonthlyUsageUsd;
+    if (typeof used !== "number" || typeof max !== "number") return null;
+
+    const atLimit = used >= max;
+    return `Apify billing: $${used.toFixed(2)} of $${max.toFixed(2)} monthly limit used${atLimit ? " — limit reached, add credits in Apify console" : ""}.`;
+  } catch {
+    return null;
+  }
+};
+
+const buildEmptyScrapeError = async ({
+  username,
+  listType,
+  attempts,
+  maxItem,
+  lastApifyError,
+}) => {
+  const usageHint = await fetchApifyAccountUsageHint(process.env.APIFY_TOKEN);
+  const parts = [
+    `Apify ${listType} scrape returned 0 users for @${username} after ${attempts} attempt(s) (maxItem=${maxItem}, actor=${THENETAJI_FOLLOW_LISTS_ACTOR}).`,
+  ];
+  if (lastApifyError) parts.push(lastApifyError);
+  if (usageHint) parts.push(usageHint);
+  parts.push(
+    "Likely causes: private/restricted Instagram account, scraper blocked, actor failure, or no Apify credits. Open console.apify.com → Runs for this actor to see the exact run log."
+  );
+  return parts.join(" ");
+};
+
 const mapApifyUser = (item) => {
   if (!item || typeof item !== "object") return null;
   const username = item.username;
@@ -75,7 +185,7 @@ const runActorSync = async (actorId, input) => {
   const token = process.env.APIFY_TOKEN;
   if (!token) {
     throw new Error(
-      "Instagram API is temporarily unavailable. Please try again later."
+      "Apify is not configured — APIFY_TOKEN is missing on the server."
     );
   }
 
@@ -89,11 +199,8 @@ const runActorSync = async (actorId, input) => {
     });
 
     if (response.status >= 400) {
-      const msg =
-        response.data?.error?.message ??
-        response.data?.message ??
-        `Apify request failed (${response.status})`;
-      throw new Error(msg);
+      const detail = describeApifyHttpError(response.status, response.data);
+      throw new Error(detail || `Apify request failed (HTTP ${response.status}).`);
     }
 
     const data = response.data;
@@ -102,22 +209,24 @@ const runActorSync = async (actorId, input) => {
     }
     return data;
   } catch (error) {
+    if (error.message?.startsWith("Apify ")) throw error;
+
     if (error.code === "ECONNABORTED") {
       throw new Error(
-        "Instagram API is temporarily unavailable. Please try again later."
+        "Apify request timed out after 120s — try again or lower maxItem."
       );
     }
-    if (error.response?.status === 401 || error.response?.status === 403) {
-      throw new Error(
-        "Instagram API is temporarily unavailable. Please try again later."
-      );
+
+    const status = error.response?.status;
+    const body = error.response?.data;
+    if (status) {
+      const detail = describeApifyHttpError(status, body);
+      throw new Error(detail || `Apify request failed (HTTP ${status}).`);
     }
-    if (error.response?.status === 429) {
-      throw new Error(
-        "API rate limit exceeded. Please try again in a few minutes or upgrade your plan for higher limits."
-      );
-    }
-    throw error;
+
+    throw new Error(
+      `Apify request failed: ${error.message || "unknown network error"}.`
+    );
   }
 };
 
@@ -148,7 +257,7 @@ export const assertApifyConfigured = () => {
   if (isHikerFollowListProvider()) return;
   if (!process.env.APIFY_TOKEN) {
     throw new Error(
-      "Instagram follower lists are temporarily unavailable. Please try again later."
+      "Apify is not configured — APIFY_TOKEN is missing on the server."
     );
   }
 };
@@ -173,11 +282,14 @@ const fetchFollowListWithRetry = async (username, listType, maxCount) => {
     if (attempt < attempts - 1) await sleep(APIFY_RETRY_DELAY_MS);
   }
 
-  const detail = lastApifyError
-    ? ` Last Apify error: ${lastApifyError}`
-    : "";
   throw new Error(
-    `Apify ${listType} scrape returned 0 users for @${username} after ${attempts} attempt(s) (maxItem=${maxItem}, actor=${THENETAJI_FOLLOW_LISTS_ACTOR}).${detail} Check Apify token, credits, and run history in the Apify console.`
+    await buildEmptyScrapeError({
+      username,
+      listType,
+      attempts,
+      maxItem,
+      lastApifyError,
+    })
   );
 };
 
