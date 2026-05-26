@@ -1,18 +1,43 @@
 import InstagramCache from "../models/InstagramCache.js";
 import { useApifyForFollowLists, getApifyListMaxCount } from "./apifyDataDopingService.js";
 import { firstPageFromFullList, getListPageSize } from "./utils/listPagination.js";
-import { getUserInfo, getFollowers, getFollowing, getUserStories, updateCache, findNewUsers, getPostLikers, getPostComments, getNextFollowersData, getNextFollowingData, fetchUserMedias, fetchMoreUserMedias } from "./utils/hikerHelperFunctions.js";
+import { getUserInfo, getFollowers, getFollowing, getUserStories, updateCache, getPostLikers, getPostComments, getNextFollowersData, getNextFollowingData, fetchUserMedias, fetchMoreUserMedias } from "./utils/hikerHelperFunctions.js";
 
 const listStorageCap = (forPremium) =>
   Math.min(getApifyListMaxCount(forPremium), 500);
 
-/** Apify lists are already newest-first; Hiker path keeps cache-diff "new" users. */
+/** Apify lists are newest-first (full scrape). Legacy hiker provider uses cache diff. */
 const followListForDisplay = (fullList, previousList) => {
   const list = Array.isArray(fullList) ? fullList : [];
   if (useApifyForFollowLists()) {
     return [...list];
   }
-  return findNewUsers(list, previousList);
+  const previousIds = new Set(
+    (previousList || [])
+      .map((u) => u?.id ?? u?.pk ?? u?.username)
+      .filter(Boolean)
+      .map(String)
+  );
+  return list.filter((u) => {
+    const key = u?.id ?? u?.pk ?? u?.username;
+    return key && !previousIds.has(String(key));
+  });
+};
+
+const profileCount = (userInfo, ...keys) => {
+  for (const key of keys) {
+    const n = userInfo?.[key];
+    if (typeof n === "number" && n > 0) return n;
+  }
+  return 0;
+};
+
+const assertListWhenProfileHasCount = (list, profileCountValue, label) => {
+  if (profileCountValue > 0 && (!list || list.length === 0)) {
+    throw new Error(
+      `Could not load ${label}. Please try again in a few minutes.`
+    );
+  }
 };
 
 const wantsFollowers = (searchType) =>
@@ -60,12 +85,22 @@ const followingDataFromCachedList = (list, forPremium = true) => {
   return { following: page, followingFull: capped, nextPageId };
 };
 
+const cachedListUsable = (list, forPremium, apifyMax) => {
+  const len = Array.isArray(list) ? list.length : 0;
+  if (len === 0) return false;
+  if (!forPremium) return true;
+  const publicCap = getApifyListMaxCount(false);
+  if (len <= publicCap && apifyMax > publicCap) return false;
+  return true;
+};
+
 const fetchFollowLists = async ({
   userId,
   username,
   searchType,
   forPremium,
   cachedData,
+  userInfo = null,
 }) => {
   const needFollowers = wantsFollowers(searchType);
   const needFollowing = wantsFollowing(searchType);
@@ -78,8 +113,10 @@ const fetchFollowLists = async ({
 
   if (
     cacheFresh &&
-    (!needFollowers || cachedData.followers?.length) &&
-    (!needFollowing || cachedData.following?.length)
+    (!needFollowers ||
+      cachedListUsable(cachedData.followers, forPremium, apifyMax)) &&
+    (!needFollowing ||
+      cachedListUsable(cachedData.following, forPremium, apifyMax))
   ) {
     return {
       followersData: needFollowers
@@ -100,6 +137,28 @@ const fetchFollowLists = async ({
       ? getFollowing({ userId, username, fetchOnce: true, maxCount: apifyMax })
       : Promise.resolve(emptyFollowingData()),
   ]);
+
+  const followersFull =
+    followersData?.followersFull ?? followersData?.followers ?? [];
+  const followingFull =
+    followingData?.followingFull ?? followingData?.following ?? [];
+
+  if (userInfo) {
+    if (needFollowers) {
+      assertListWhenProfileHasCount(
+        followersFull,
+        profileCount(userInfo, "followerCount", "follower_count"),
+        "recent followers"
+      );
+    }
+    if (needFollowing) {
+      assertListWhenProfileHasCount(
+        followingFull,
+        profileCount(userInfo, "followingCount", "following_count"),
+        "recent following"
+      );
+    }
+  }
 
   return { followersData, followingData, fromCache: false };
 };
@@ -195,6 +254,7 @@ export const getRecentActivity = async (
           searchType: "both",
           forPremium: false,
           cachedData,
+          userInfo,
         }),
         fetchLikerFrequencyMap(userId, redFlagLimit),
       ]);
@@ -277,6 +337,7 @@ export const getAdvancedActivity = async (
         searchType,
         forPremium: true,
         cachedData,
+        userInfo,
       }),
       getUserStories({ userId }),
       fetchLikerFrequencyMap(userId, redFlagLimit),

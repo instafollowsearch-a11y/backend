@@ -3,7 +3,8 @@ import InstagramCache from "../../models/InstagramCache.js";
 import {
   fetchFollowersFromApify,
   fetchFollowingFromApify,
-  useApifyForFollowLists,
+  isHikerFollowListProvider,
+  assertApifyConfigured,
 } from "../apifyDataDopingService.js";
 import {
   getListPageSize,
@@ -185,9 +186,11 @@ export const getFollowers = async ({
   maxCount = null,
 }) => {
   try {
-    if (!useApifyForFollowLists()) {
+    if (isHikerFollowListProvider()) {
       return await getFollowersHiker({ userId, skipOnId, fetchOnce });
     }
+
+    assertApifyConfigured();
 
     const resolvedUsername = await resolveUsername(username, userId);
     if (!resolvedUsername) {
@@ -219,7 +222,7 @@ export const getFollowers = async ({
 
 export const getNextFollowersData = async ({ userId, nextPageId }) => {
   try {
-    if (!useApifyForFollowLists()) {
+    if (isHikerFollowListProvider()) {
       const response = await hikerApi.get("/v2/user/followers", {
         params: { user_id: Number(userId), page_id: nextPageId },
       });
@@ -255,9 +258,11 @@ export const getFollowing = async ({
   maxCount = null,
 }) => {
   try {
-    if (!useApifyForFollowLists()) {
+    if (isHikerFollowListProvider()) {
       return await getFollowingHiker({ userId, skipOnId, fetchOnce });
     }
+
+    assertApifyConfigured();
 
     const resolvedUsername = await resolveUsername(username, userId);
     if (!resolvedUsername) {
@@ -289,7 +294,7 @@ export const getFollowing = async ({
 
 export const getNextFollowingData = async ({ userId, nextPageId }) => {
   try {
-    if (!useApifyForFollowLists()) {
+    if (isHikerFollowListProvider()) {
       const response = await hikerApi.get("/gql/user/following/chunk", {
         params: { user_id: Number(userId), end_cursor: nextPageId },
       });

@@ -134,17 +134,41 @@ const fetchFollowListFromApify = async (username, listType, maxCount) => {
   return uniqueUsersInOrder(mapped);
 };
 
+const APIFY_RETRY_DELAY_MS = 1500;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export const isHikerFollowListProvider = () =>
+  (process.env.FOLLOWERS_FOLLOWING_PROVIDER || "apify").toLowerCase() === "hiker";
+
+/** Follower/following lists use Apify unless explicitly overridden to hiker. */
+export const useApifyForFollowLists = () => !isHikerFollowListProvider();
+
+export const assertApifyConfigured = () => {
+  if (isHikerFollowListProvider()) return;
+  if (!process.env.APIFY_TOKEN) {
+    throw new Error(
+      "Instagram follower lists are temporarily unavailable. Please try again later."
+    );
+  }
+};
+
+const fetchFollowListWithRetry = async (username, listType, maxCount) => {
+  const attempts = Math.max(1, parseInt(process.env.APIFY_LIST_RETRY_ATTEMPTS || "2", 10));
+  let last = [];
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    last = await fetchFollowListFromApify(username, listType, maxCount);
+    if (last.length > 0) return last;
+    if (attempt < attempts - 1) await sleep(APIFY_RETRY_DELAY_MS);
+  }
+  return last;
+};
+
 export const fetchFollowersFromApify = async (username, maxCount) =>
-  fetchFollowListFromApify(username, "followers", maxCount);
+  fetchFollowListWithRetry(username, "followers", maxCount);
 
 export const fetchFollowingFromApify = async (username, maxCount) =>
-  fetchFollowListFromApify(username, "followings", maxCount);
-
-export const useApifyForFollowLists = () => {
-  const provider = (process.env.FOLLOWERS_FOLLOWING_PROVIDER || "apify").toLowerCase();
-  if (provider === "hiker") return false;
-  return Boolean(process.env.APIFY_TOKEN);
-};
+  fetchFollowListWithRetry(username, "followings", maxCount);
 
 /** Public search: small scrape. Premium: max items stored in cache (load more in pages of FOLLOW_LIST_PAGE_SIZE). */
 export const getApifyListMaxCount = (forPremium = false) => {
