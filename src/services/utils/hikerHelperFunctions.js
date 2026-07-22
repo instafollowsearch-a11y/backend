@@ -178,20 +178,6 @@ const getFollowingHiker = async ({ userId, skipOnId = null, fetchOnce = false })
   return { following: results.slice(0, maxLimit), nextPageId };
 };
 
-const getSharedActivityFollowSearchMax = () => {
-  const n = parseInt(process.env.SHARED_ACTIVITY_FOLLOW_SEARCH_MAX || "5000", 10);
-  if (!Number.isFinite(n) || n < 1) return 5000;
-  return Math.min(n, 20000);
-};
-
-const profileCountValue = (user, ...keys) => {
-  for (const key of keys) {
-    const n = user?.[key];
-    if (typeof n === "number" && n >= 0) return n;
-  }
-  return 0;
-};
-
 const userMatchesTarget = (user, targetId, targetUsername) => {
   if (!user) return false;
   const ids = [user.id, user.pk, user.pk_id, user.user_id]
@@ -210,90 +196,36 @@ const userMatchesTarget = (user, targetId, targetUsername) => {
 
 /**
  * Shared Activity only: does source follow target?
- * Prefers the smaller of source.following vs target.followers, pages Hiker until
- * found / exhausted / safety cap. Never returns false on truncation (null instead).
+ * Uses Hiker's one-request search-in-following (not capped Apify lists / full pagination).
  */
 export const checkFollowsViaHiker = async ({ sourceUser, targetUser }) => {
   const sourceId = sourceUser?.id ?? sourceUser?.pk;
   const targetId = targetUser?.id ?? targetUser?.pk;
-  const sourceUsername = sourceUser?.username;
   const targetUsername = targetUser?.username;
 
-  if (sourceId == null || targetId == null) {
+  if (sourceId == null || !targetUsername) {
     return { follows: null, truncated: true };
   }
 
-  const searchMax = getSharedActivityFollowSearchMax();
-  const sourceFollowingCount = profileCountValue(
-    sourceUser,
-    "followingCount",
-    "following_count"
-  );
-  const targetFollowerCount = profileCountValue(
-    targetUser,
-    "followerCount",
-    "follower_count"
-  );
-
-  // Prefer scanning the smaller list when counts are known.
-  const useFollowingList =
-    targetFollowerCount <= 0 ||
-    sourceFollowingCount <= 0 ||
-    sourceFollowingCount <= targetFollowerCount;
-
-  let scanned = 0;
-  let nextPageId = undefined;
-  let hitCap = false;
-
   try {
-    while (scanned < searchMax) {
-      if (useFollowingList) {
-        const response = await hikerApi.get("/gql/user/following/chunk", {
-          params: { user_id: sourceId, end_cursor: nextPageId },
-        });
-        const users = response.data?.[0] || [];
-        if (users.length === 0) {
-          return { follows: false, truncated: false };
-        }
-        if (users.some((u) => userMatchesTarget(u, targetId, targetUsername))) {
-          return { follows: true, truncated: false };
-        }
-        scanned += users.length;
-        nextPageId = response.data?.[1];
-        if (!nextPageId) {
-          return { follows: false, truncated: false };
-        }
-      } else {
-        const response = await hikerApi.get("/v2/user/followers", {
-          params: { user_id: targetId, page_id: nextPageId },
-        });
-        const users = response.data.response?.users || [];
-        if (users.length === 0) {
-          return { follows: false, truncated: false };
-        }
-        if (users.some((u) => userMatchesTarget(u, sourceId, sourceUsername))) {
-          return { follows: true, truncated: false };
-        }
-        scanned += users.length;
-        nextPageId = response.data?.next_page_id;
-        if (!nextPageId) {
-          return { follows: false, truncated: false };
-        }
-      }
-
-      if (scanned >= searchMax) {
-        hitCap = true;
-        break;
-      }
-    }
+    const response = await hikerApi.get("/v1/user/search/following", {
+      params: {
+        user_id: String(sourceId),
+        query: String(targetUsername),
+      },
+    });
+    const users = Array.isArray(response.data) ? response.data : [];
+    const follows = users.some((u) => userMatchesTarget(u, targetId, targetUsername));
+    return { follows, truncated: false };
   } catch (error) {
+    // Search endpoint unavailable → unknown (never claim false)
+    if (error.response?.status === 404 || error.response?.status === 422) {
+      return { follows: null, truncated: true };
+    }
     handleApiError(error, "checking follow relationship");
   }
 
-  if (hitCap) {
-    return { follows: null, truncated: true };
-  }
-  return { follows: false, truncated: false };
+  return { follows: null, truncated: true };
 };
 
 export const getFollowers = async ({
