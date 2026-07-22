@@ -1,7 +1,7 @@
 import InstagramCache from "../models/InstagramCache.js";
 import { useApifyForFollowLists, getApifyListMaxCount } from "./apifyDataDopingService.js";
 import { firstPageFromFullList, getListPageSize } from "./utils/listPagination.js";
-import { getUserInfo, getFollowers, getFollowing, getUserStories, updateCache, getPostLikers, getPostComments, getNextFollowersData, getNextFollowingData, fetchUserMedias, fetchMoreUserMedias } from "./utils/hikerHelperFunctions.js";
+import { getUserInfo, getFollowers, getFollowing, getUserStories, updateCache, getPostLikers, getPostComments, getNextFollowersData, getNextFollowingData, fetchUserMedias, fetchMoreUserMedias, checkFollowsViaHiker } from "./utils/hikerHelperFunctions.js";
 
 const listStorageCap = (forPremium) =>
   Math.min(getApifyListMaxCount(forPremium), 500);
@@ -415,33 +415,13 @@ export const getSharedActivity = async (username1, username2) => {
     const firstUserId = firstUser.id || firstUser.pk;
     const secondUserId = secondUser.id || secondUser.pk;
 
-    // Get following info
-    const [firstUserFollowingData, secondUserFollowingData] = await Promise.all([
-      getFollowing({
-        userId: firstUserId,
-        username: firstUser.username,
-        skipOnId: secondUserId,
-      }),
-      getFollowing({
-        userId: secondUserId,
-        username: secondUser.username,
-        skipOnId: firstUserId,
-      }),
+    // Follow relation via Hiker search-until-found (not Apify 500-cap lists)
+    const [firstFollowsSecond, secondFollowsFirst] = await Promise.all([
+      checkFollowsViaHiker({ sourceUser: firstUser, targetUser: secondUser }),
+      checkFollowsViaHiker({ sourceUser: secondUser, targetUser: firstUser }),
     ]);
-    const firstUserFollowing = firstUserFollowingData?.following;
-    const secondUserFollowing = secondUserFollowingData?.following;
-
-    const isFirstFollowingSecond = firstUserFollowing.some(
-      (user) =>
-        String(user.id) === String(secondUserId) ||
-        user.username === secondUser.username
-    );
-
-    const isSecondFollowingFirst = secondUserFollowing.some(
-      (user) =>
-        String(user.id) === String(firstUserId) ||
-        user.username === firstUser.username
-    );
+    const isFirstFollowingSecond = firstFollowsSecond.follows;
+    const isSecondFollowingFirst = secondFollowsFirst.follows;
 
     // Fetch recent posts for both users
     const [firstUserPosts, secondUserPosts] = await Promise.all([

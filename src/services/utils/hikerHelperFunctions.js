@@ -178,6 +178,124 @@ const getFollowingHiker = async ({ userId, skipOnId = null, fetchOnce = false })
   return { following: results.slice(0, maxLimit), nextPageId };
 };
 
+const getSharedActivityFollowSearchMax = () => {
+  const n = parseInt(process.env.SHARED_ACTIVITY_FOLLOW_SEARCH_MAX || "5000", 10);
+  if (!Number.isFinite(n) || n < 1) return 5000;
+  return Math.min(n, 20000);
+};
+
+const profileCountValue = (user, ...keys) => {
+  for (const key of keys) {
+    const n = user?.[key];
+    if (typeof n === "number" && n >= 0) return n;
+  }
+  return 0;
+};
+
+const userMatchesTarget = (user, targetId, targetUsername) => {
+  if (!user) return false;
+  const ids = [user.id, user.pk, user.pk_id, user.user_id]
+    .filter((v) => v !== undefined && v !== null)
+    .map(String);
+  if (targetId != null && ids.includes(String(targetId))) return true;
+  if (
+    targetUsername &&
+    typeof user.username === "string" &&
+    user.username.toLowerCase() === String(targetUsername).toLowerCase()
+  ) {
+    return true;
+  }
+  return false;
+};
+
+/**
+ * Shared Activity only: does source follow target?
+ * Prefers the smaller of source.following vs target.followers, pages Hiker until
+ * found / exhausted / safety cap. Never returns false on truncation (null instead).
+ */
+export const checkFollowsViaHiker = async ({ sourceUser, targetUser }) => {
+  const sourceId = sourceUser?.id ?? sourceUser?.pk;
+  const targetId = targetUser?.id ?? targetUser?.pk;
+  const sourceUsername = sourceUser?.username;
+  const targetUsername = targetUser?.username;
+
+  if (sourceId == null || targetId == null) {
+    return { follows: null, truncated: true };
+  }
+
+  const searchMax = getSharedActivityFollowSearchMax();
+  const sourceFollowingCount = profileCountValue(
+    sourceUser,
+    "followingCount",
+    "following_count"
+  );
+  const targetFollowerCount = profileCountValue(
+    targetUser,
+    "followerCount",
+    "follower_count"
+  );
+
+  // Prefer scanning the smaller list when counts are known.
+  const useFollowingList =
+    targetFollowerCount <= 0 ||
+    sourceFollowingCount <= 0 ||
+    sourceFollowingCount <= targetFollowerCount;
+
+  let scanned = 0;
+  let nextPageId = undefined;
+  let hitCap = false;
+
+  try {
+    while (scanned < searchMax) {
+      if (useFollowingList) {
+        const response = await hikerApi.get("/gql/user/following/chunk", {
+          params: { user_id: sourceId, end_cursor: nextPageId },
+        });
+        const users = response.data?.[0] || [];
+        if (users.length === 0) {
+          return { follows: false, truncated: false };
+        }
+        if (users.some((u) => userMatchesTarget(u, targetId, targetUsername))) {
+          return { follows: true, truncated: false };
+        }
+        scanned += users.length;
+        nextPageId = response.data?.[1];
+        if (!nextPageId) {
+          return { follows: false, truncated: false };
+        }
+      } else {
+        const response = await hikerApi.get("/v2/user/followers", {
+          params: { user_id: targetId, page_id: nextPageId },
+        });
+        const users = response.data.response?.users || [];
+        if (users.length === 0) {
+          return { follows: false, truncated: false };
+        }
+        if (users.some((u) => userMatchesTarget(u, sourceId, sourceUsername))) {
+          return { follows: true, truncated: false };
+        }
+        scanned += users.length;
+        nextPageId = response.data?.next_page_id;
+        if (!nextPageId) {
+          return { follows: false, truncated: false };
+        }
+      }
+
+      if (scanned >= searchMax) {
+        hitCap = true;
+        break;
+      }
+    }
+  } catch (error) {
+    handleApiError(error, "checking follow relationship");
+  }
+
+  if (hitCap) {
+    return { follows: null, truncated: true };
+  }
+  return { follows: false, truncated: false };
+};
+
 export const getFollowers = async ({
   userId,
   username = null,
