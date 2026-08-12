@@ -42,11 +42,9 @@ const connectDB = async () => {
     // Import models so they register on the sequelize instance
     await import('../models/index.js');
 
-    // Run migrations locally / when not production (NODE_ENV may be unset)
-    if (process.env.NODE_ENV !== 'production') {
-      const { runMigrations } = await import('./migrations.js');
-      await runMigrations();
-    }
+    // Always run idempotent migrations (IF NOT EXISTS) so Render/prod gets new tables
+    const { runMigrations } = await import('./migrations.js');
+    await runMigrations();
 
   } catch (error) {
     console.error('❌ Database connection failed:', error.message);
