@@ -17,8 +17,9 @@ import {
   getMediaLikers,
   getMediaComments
 } from '../controllers/instagramController.js';
-import { protect, authorize, optionalAuth } from '../middleware/auth.js';
+import { protect, authorize, optionalAuth, requireActiveSubscription } from '../middleware/auth.js';
 import { storyViewerLimiter } from '../middleware/storyViewerLimiter.js';
+import { searchLimiter, expensiveLimiter } from '../middleware/rateLimiters.js';
 import axios from 'axios'; // Added axios import
 
 const router = express.Router();
@@ -67,9 +68,8 @@ const sharedActivityValidation = [
 
 // Routes
 
-// Search for recent followers/following
-// This endpoint works for both authenticated and anonymous users
-router.post('/search', optionalAuth, searchValidation, searchRecent);
+// Search for recent followers/following (public funnel — rate limited)
+router.post('/search', searchLimiter, optionalAuth, searchValidation, searchRecent);
 
 // Check if username exists and get basic info
 router.get('/check/:username', usernameValidation, checkUsername);
@@ -86,13 +86,37 @@ router.get('/analytics', protect, authorize('admin'), getAnalytics);
 // Advanced search for dashboard (authenticated users only)
 router.post('/advanced-search', protect, searchValidation, advancedSearch);
 
-// Shared Activity among two IG accounts (authenticated users only)
-router.post('/shared-activity', optionalAuth, sharedActivityValidation, sharedActivity);
+// Paid / expensive Hiker features — auth + active subscription required
+router.post(
+  '/shared-activity',
+  protect,
+  expensiveLimiter,
+  requireActiveSubscription,
+  sharedActivityValidation,
+  sharedActivity
+);
 router.post('/next-followers', protect, nextFollowers);
 router.post('/next-following', protect, nextFollowing);
-router.post('/next-medias', protect, nextMedias);
-router.post('/admirers', optionalAuth, getAdmirers);
-router.post('/view-profile', optionalAuth, getInstagramProfile);
+router.post(
+  '/next-medias',
+  protect,
+  requireActiveSubscription,
+  nextMedias
+);
+router.post(
+  '/admirers',
+  protect,
+  expensiveLimiter,
+  requireActiveSubscription,
+  getAdmirers
+);
+router.post(
+  '/view-profile',
+  protect,
+  expensiveLimiter,
+  requireActiveSubscription,
+  getInstagramProfile
+);
 router.post(
   '/story-viewer',
   storyViewerLimiter,
@@ -100,8 +124,18 @@ router.post(
   storyViewerValidation,
   getStoryViewer
 );
-router.post('/media-likers', protect, getMediaLikers);
-router.post('/media-comments', protect, getMediaComments);
+router.post(
+  '/media-likers',
+  protect,
+  requireActiveSubscription,
+  getMediaLikers
+);
+router.post(
+  '/media-comments',
+  protect,
+  requireActiveSubscription,
+  getMediaComments
+);
 
 // Proxy route for Instagram images
 router.get('/proxy-image', async (req, res) => {

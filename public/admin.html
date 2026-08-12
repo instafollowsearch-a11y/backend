@@ -3,287 +3,418 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FollowerSearch Admin Panel</title>
-        <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-   
+    <title>InstaFollowCheck Ops Console</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        body { font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif; }
+        .tab-active { border-color: #2563eb; color: #2563eb; }
+        .spark { display: flex; align-items: flex-end; gap: 3px; height: 48px; }
+        .spark span { flex: 1; min-width: 4px; background: #93c5fd; border-radius: 2px 2px 0 0; }
+        .bar-track { height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; }
+        .bar-fill { height: 100%; background: linear-gradient(90deg, #2563eb, #0ea5e9); }
+        #userDrawer .section-title { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: #6b7280; font-weight: 600; }
+    </style>
 </head>
-<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
-    <div id="alertContainer" class="fixed top-4 right-4 z-50"></div>
+<body class="bg-slate-100 min-h-screen text-slate-800">
+    <div id="alertContainer" class="fixed top-4 right-4 z-[60] w-80 space-y-2"></div>
 
-    <!-- Login Form -->
+    <!-- Login -->
     <div id="loginForm" class="min-h-screen flex items-center justify-center px-4">
-        <div class="max-w-md w-full space-y-8">
-            <div class="bg-white rounded-2xl shadow-xl p-8">
-                <div class="text-center mb-8">
-                    <h2 class="text-3xl font-bold text-gray-900 mb-2">Admin Panel</h2>
-                    <p class="text-gray-600">FollowerSearch Management</p>
-                </div>
-                
-                <form class="space-y-6">
-                    <div>
-                        <label for="adminLogin" class="block text-sm font-medium text-gray-700 mb-2">
-                            Admin Login
-                        </label>
-                        <input 
-                            type="text" 
-                            id="adminLogin" 
-                            placeholder="Enter admin login"
-                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition duration-200"
-                        >
-                    </div>
-                    
-                    <div>
-                        <label for="adminPassword" class="block text-sm font-medium text-gray-700 mb-2">
-                            Password
-                        </label>
-                        <input 
-                            type="password" 
-                            id="adminPassword" 
-                            placeholder="Enter password"
-                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition duration-200"
-                        >
-                    </div>
-                    
-                    <button 
-                        type="button" 
-                        id="loginBtn"
-                        class="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 px-4 rounded-lg font-medium hover:from-blue-700 hover:to-blue-800 transform hover:scale-105 transition duration-200 shadow-lg"
-                    >
-                        Sign In
-                    </button>
-                </form>
+        <div class="max-w-md w-full bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
+            <div class="mb-8">
+                <p class="text-xs font-semibold tracking-wider uppercase text-blue-600 mb-2">Ops Console</p>
+                <h2 class="text-3xl font-bold text-slate-900">Admin sign in</h2>
+                <p class="text-slate-500 mt-2">360° control for users, access, usage, and audits.</p>
             </div>
+            <form class="space-y-5" onsubmit="return false;">
+                <div>
+                    <label for="adminLogin" class="block text-sm font-medium text-slate-700 mb-1">Admin login</label>
+                    <input id="adminLogin" type="text" autocomplete="username"
+                        class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        placeholder="admin">
+                </div>
+                <div>
+                    <label for="adminPassword" class="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                    <input id="adminPassword" type="password" autocomplete="current-password"
+                        class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        placeholder="••••••••">
+                </div>
+                <button type="button" id="loginBtn"
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-semibold transition">
+                    Enter console
+                </button>
+            </form>
         </div>
     </div>
 
-    <!-- Admin Panel -->
-    <div id="adminPanel" class="min-h-screen bg-gray-50" style="display: none;">
-        <!-- Header -->
-        <header class="bg-white shadow-sm border-b border-gray-200">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div class="flex justify-between items-center py-6">
-                    <div>
-                        <h1 class="text-2xl font-bold text-gray-900">FollowerSearch Admin</h1>
-                        <p class="text-gray-600">User and subscription management</p>
-                    </div>
-                    <button 
-                        id="logoutBtn"
-                        class="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition duration-200"
-                    >
-                        Logout
-                    </button>
+    <!-- Console -->
+    <div id="adminPanel" class="min-h-screen" style="display:none;">
+        <header class="bg-slate-900 text-white sticky top-0 z-40">
+            <div class="max-w-[1400px] mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight">InstaFollowCheck Ops</h1>
+                    <p class="text-slate-400 text-sm">Live product control · users · entitlement · activity</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button type="button" id="refreshAllBtn"
+                        class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm">Refresh</button>
+                    <button type="button" id="logoutBtn"
+                        class="px-3 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-sm font-medium">Logout</button>
                 </div>
             </div>
+            <nav class="max-w-[1400px] mx-auto px-4 sm:px-6 flex gap-1 overflow-x-auto pb-0">
+                <button class="tab tab-active px-4 py-3 text-sm font-medium border-b-2" data-tab="overview">Overview</button>
+                <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="users">Users</button>
+                <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="subscriptions">Access</button>
+                <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="activity">Activity</button>
+                <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="searches">Searches</button>
+                <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="audits">Audit log</button>
+            </nav>
         </header>
 
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            <!-- Statistics -->
-            <div class="mb-8">
-                <h2 class="text-xl font-semibold text-gray-900 mb-4">Dashboard Overview</h2>
-                <div id="statsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                    <!-- Stats will be loaded here -->
-                </div>
-            </div>
-
-            <!-- Tabs -->
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200">
-                <div class="border-b border-gray-200">
-                    <nav class="flex space-x-8 px-6">
-                        <button class="tab py-4 px-1 border-b-2 border-blue-500 text-blue-600 font-medium text-sm" data-tab="users">
-                            Users
-                        </button>
-                        <button class="tab py-4 px-1 border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 font-medium text-sm" data-tab="subscriptions">
-                            Subscriptions
-                        </button>
-                    </nav>
-                </div>
-
-                <!-- Users Tab -->
-                <div id="usersTab" class="tab-content active p-6">
-                    <!-- Search and Filters -->
-                    <div class="mb-6 flex flex-col sm:flex-row gap-4">
-                        <div class="flex-1">
-                            <input 
-                                type="text" 
-                                id="userSearch" 
-                                placeholder="Search users by username, email, name..."
-                                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                            >
+        <main class="max-w-[1400px] mx-auto px-4 sm:px-6 py-6 space-y-6">
+            <!-- Overview -->
+            <section id="overviewTab" class="tab-content space-y-6">
+                <div id="statsGrid" class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3"></div>
+                <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                    <div class="xl:col-span-2 bg-white border border-slate-200 rounded-2xl p-5">
+                        <div class="flex items-center justify-between mb-4">
+                            <h2 class="font-semibold text-slate-900">Events (selected range)</h2>
+                            <select id="overviewDays" class="text-sm border border-slate-300 rounded-lg px-2 py-1">
+                                <option value="7">7 days</option>
+                                <option value="14">14 days</option>
+                                <option value="30">30 days</option>
+                            </select>
                         </div>
-                        <select 
-                            id="roleFilter"
-                            class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                        >
-                            <option value="">All roles</option>
+                        <div id="overviewSpark" class="spark mb-4"></div>
+                        <div id="overviewFunnel" class="space-y-2"></div>
+                    </div>
+                    <div class="bg-white border border-slate-200 rounded-2xl p-5">
+                        <h2 class="font-semibold text-slate-900 mb-4">Paid plan mix</h2>
+                        <div id="overviewPlanMix" class="space-y-3 text-sm"></div>
+                        <h2 class="font-semibold text-slate-900 mt-6 mb-3">Feature usage</h2>
+                        <div id="overviewFeatures" class="space-y-2 text-sm"></div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div class="bg-white border border-slate-200 rounded-2xl p-5">
+                        <div class="flex justify-between items-center mb-3">
+                            <h2 class="font-semibold">Live event feed</h2>
+                            <button type="button" class="text-sm text-blue-600" data-goto="activity">Open activity</button>
+                        </div>
+                        <div id="overviewEvents" class="space-y-2 max-h-80 overflow-y-auto text-sm"></div>
+                    </div>
+                    <div class="bg-white border border-slate-200 rounded-2xl p-5">
+                        <div class="flex justify-between items-center mb-3">
+                            <h2 class="font-semibold">Recent admin actions</h2>
+                            <button type="button" class="text-sm text-blue-600" data-goto="audits">Open audits</button>
+                        </div>
+                        <div id="overviewAudits" class="space-y-2 max-h-80 overflow-y-auto text-sm"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Users -->
+            <section id="usersTab" class="tab-content" style="display:none;">
+                <div class="bg-white border border-slate-200 rounded-2xl p-5">
+                    <div class="flex flex-col lg:flex-row gap-3 mb-4">
+                        <input id="userSearch" type="search" placeholder="Search username, email, name…"
+                            class="flex-1 px-3 py-2 border border-slate-300 rounded-xl">
+                        <select id="roleFilter" class="px-3 py-2 border border-slate-300 rounded-xl">
+                            <option value="">All ACL roles</option>
                             <option value="user">User</option>
-                            <option value="premium">Premium</option>
                             <option value="admin">Admin</option>
                         </select>
+                        <button type="button" id="userSearchBtn" class="px-4 py-2 bg-blue-600 text-white rounded-xl">Search</button>
                     </div>
-
-                    <!-- Users Table -->
                     <div class="overflow-x-auto">
-                        <table class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-gray-50">
+                        <table class="min-w-full text-sm">
+                            <thead class="bg-slate-50 text-slate-500 uppercase text-xs">
                                 <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                    <th class="px-3 py-3 text-left">User</th>
+                                    <th class="px-3 py-3 text-left">ACL</th>
+                                    <th class="px-3 py-3 text-left">Access</th>
+                                    <th class="px-3 py-3 text-left">Stripe</th>
+                                    <th class="px-3 py-3 text-left">Joined</th>
+                                    <th class="px-3 py-3 text-left">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody id="usersTableBody" class="bg-white divide-y divide-gray-200">
-                                <!-- Users will be loaded here -->
-                            </tbody>
+                            <tbody id="usersTableBody" class="divide-y divide-slate-100"></tbody>
                         </table>
                     </div>
-
-                    <!-- Pagination -->
-                    <div id="usersPagination" class="mt-6 flex justify-center">
-                        <!-- Pagination will be loaded here -->
-                    </div>
+                    <div id="usersPagination" class="mt-4 flex justify-center"></div>
                 </div>
+            </section>
 
-                <!-- Subscriptions Tab -->
-                <div id="subscriptionsTab" class="tab-content p-6" style="display: none;">
-                    <!-- Search and Filters -->
-                    <div class="mb-6">
-                        <select 
-                            id="statusFilter"
-                            class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                        >
+            <!-- Subscriptions / Access -->
+            <section id="subscriptionsTab" class="tab-content" style="display:none;">
+                <div class="bg-white border border-slate-200 rounded-2xl p-5">
+                    <div class="flex flex-wrap gap-3 mb-4 items-center justify-between">
+                        <div>
+                            <h2 class="font-semibold text-lg">Entitlements</h2>
+                            <p class="text-sm text-slate-500">Local comps + Stripe-synced subscription rows</p>
+                        </div>
+                        <select id="statusFilter" class="px-3 py-2 border border-slate-300 rounded-xl">
                             <option value="">All statuses</option>
                             <option value="active">Active</option>
                             <option value="cancelled">Cancelled</option>
                             <option value="expired">Expired</option>
                         </select>
                     </div>
-
-                    <!-- Subscriptions Table -->
                     <div class="overflow-x-auto">
-                        <table class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-gray-50">
+                        <table class="min-w-full text-sm">
+                            <thead class="bg-slate-50 text-slate-500 uppercase text-xs">
                                 <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Plan</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">End Date</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Used</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Limit</th>
+                                    <th class="px-3 py-3 text-left">ID</th>
+                                    <th class="px-3 py-3 text-left">User</th>
+                                    <th class="px-3 py-3 text-left">Plan</th>
+                                    <th class="px-3 py-3 text-left">Status</th>
+                                    <th class="px-3 py-3 text-left">Ends</th>
+                                    <th class="px-3 py-3 text-left">Usage</th>
+                                    <th class="px-3 py-3 text-left">Source</th>
+                                    <th class="px-3 py-3 text-left"></th>
                                 </tr>
                             </thead>
-                            <tbody id="subscriptionsTableBody" class="bg-white divide-y divide-gray-200">
-                                <!-- Subscriptions will be loaded here -->
-                            </tbody>
+                            <tbody id="subscriptionsTableBody" class="divide-y divide-slate-100"></tbody>
                         </table>
                     </div>
+                    <div id="subscriptionsPagination" class="mt-4 flex justify-center"></div>
+                </div>
+            </section>
 
-                    <!-- Pagination -->
-                    <div id="subscriptionsPagination" class="mt-6 flex justify-center">
-                        <!-- Pagination will be loaded here -->
+            <!-- Activity -->
+            <section id="activityTab" class="tab-content" style="display:none;">
+                <div class="flex flex-wrap gap-3 items-center justify-between mb-4">
+                    <div>
+                        <h2 class="font-semibold text-lg">Product activity</h2>
+                        <p class="text-sm text-slate-500">First-party events, funnels, and live feed</p>
+                    </div>
+                    <select id="activityDays" class="px-3 py-2 border border-slate-300 rounded-xl bg-white">
+                        <option value="7">Last 7 days</option>
+                        <option value="14">Last 14 days</option>
+                        <option value="30">Last 30 days</option>
+                    </select>
+                </div>
+                <div id="activityKpis" class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3 mb-4"></div>
+                <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4">
+                    <div class="bg-white border border-slate-200 rounded-2xl p-5 xl:col-span-2">
+                        <h3 class="font-semibold mb-3">Conversion funnel</h3>
+                        <div id="activityFunnel" class="space-y-2"></div>
+                    </div>
+                    <div class="bg-white border border-slate-200 rounded-2xl p-5">
+                        <h3 class="font-semibold mb-3">Top search targets</h3>
+                        <div id="activityTopSearches" class="space-y-2 text-sm"></div>
                     </div>
                 </div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                    <div class="bg-white border border-slate-200 rounded-2xl p-5">
+                        <h3 class="font-semibold mb-3">Top events</h3>
+                        <div id="activityTopEvents" class="space-y-2 text-sm"></div>
+                    </div>
+                    <div class="bg-white border border-slate-200 rounded-2xl p-5">
+                        <h3 class="font-semibold mb-3">Top pages</h3>
+                        <div id="activityTopPages" class="space-y-2 text-sm"></div>
+                    </div>
+                </div>
+                <div class="bg-white border border-slate-200 rounded-2xl p-5">
+                    <div class="flex flex-wrap gap-3 items-center justify-between mb-3">
+                        <h3 class="font-semibold">Event stream</h3>
+                        <select id="eventFilter" class="px-3 py-2 border border-slate-300 rounded-xl text-sm">
+                            <option value="">All events</option>
+                            <option value="page_view">page_view</option>
+                            <option value="search">search</option>
+                            <option value="shared_activity">shared_activity</option>
+                            <option value="admirers">admirers</option>
+                            <option value="view_profile">view_profile</option>
+                            <option value="story_viewer">story_viewer</option>
+                            <option value="upgrade_cta">upgrade_cta</option>
+                            <option value="checkout_started">checkout_started</option>
+                        </select>
+                    </div>
+                    <div id="activityEventStream" class="overflow-x-auto"></div>
+                </div>
+            </section>
+
+            <!-- Searches -->
+            <section id="searchesTab" class="tab-content" style="display:none;">
+                <div class="bg-white border border-slate-200 rounded-2xl p-5">
+                    <div class="flex flex-col sm:flex-row gap-3 mb-4">
+                        <input id="searchHistoryQuery" type="search" placeholder="Filter by Instagram username…"
+                            class="flex-1 px-3 py-2 border border-slate-300 rounded-xl">
+                        <button type="button" id="searchHistoryBtn" class="px-4 py-2 bg-blue-600 text-white rounded-xl">Filter</button>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-sm">
+                            <thead class="bg-slate-50 text-slate-500 uppercase text-xs">
+                                <tr>
+                                    <th class="px-3 py-3 text-left">When</th>
+                                    <th class="px-3 py-3 text-left">Target</th>
+                                    <th class="px-3 py-3 text-left">Type</th>
+                                    <th class="px-3 py-3 text-left">Account</th>
+                                    <th class="px-3 py-3 text-left">Status</th>
+                                    <th class="px-3 py-3 text-left">IP</th>
+                                </tr>
+                            </thead>
+                            <tbody id="searchesTableBody" class="divide-y divide-slate-100"></tbody>
+                        </table>
+                    </div>
+                    <div id="searchesPagination" class="mt-4 flex justify-center"></div>
+                </div>
+            </section>
+
+            <!-- Audits -->
+            <section id="auditsTab" class="tab-content" style="display:none;">
+                <div class="bg-white border border-slate-200 rounded-2xl p-5">
+                    <div class="flex flex-wrap gap-3 mb-4 items-center justify-between">
+                        <div>
+                            <h2 class="font-semibold text-lg">Audit trail</h2>
+                            <p class="text-sm text-slate-500">Every grant, revoke, role change, and delete</p>
+                        </div>
+                        <select id="auditActionFilter" class="px-3 py-2 border border-slate-300 rounded-xl">
+                            <option value="">All actions</option>
+                            <option value="grant_access">grant_access</option>
+                            <option value="extend_access">extend_access</option>
+                            <option value="revoke_access">revoke_access</option>
+                            <option value="update_access">update_access</option>
+                            <option value="role_update">role_update</option>
+                            <option value="user_delete">user_delete</option>
+                        </select>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-sm">
+                            <thead class="bg-slate-50 text-slate-500 uppercase text-xs">
+                                <tr>
+                                    <th class="px-3 py-3 text-left">When</th>
+                                    <th class="px-3 py-3 text-left">Actor</th>
+                                    <th class="px-3 py-3 text-left">Action</th>
+                                    <th class="px-3 py-3 text-left">Target user</th>
+                                    <th class="px-3 py-3 text-left">Payload</th>
+                                </tr>
+                            </thead>
+                            <tbody id="auditsTableBody" class="divide-y divide-slate-100"></tbody>
+                        </table>
+                    </div>
+                    <div id="auditsPagination" class="mt-4 flex justify-center"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- User drawer -->
+    <div id="userDrawer" class="fixed inset-0 z-50" style="display:none;">
+        <div class="absolute inset-0 bg-slate-900/50" id="userDrawerBackdrop"></div>
+        <aside class="absolute right-0 top-0 h-full w-full max-w-xl bg-white shadow-2xl overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b border-slate-200 px-5 py-4 flex justify-between items-center">
+                <div>
+                    <h3 class="text-lg font-semibold">User control</h3>
+                    <p class="text-xs text-slate-500">Identity · entitlement · Stripe · usage</p>
+                </div>
+                <button type="button" id="closeUserDrawer" class="text-2xl text-slate-400 hover:text-slate-700" aria-label="Close">&times;</button>
+            </div>
+            <div id="userDrawerBody" class="p-5 space-y-5 text-sm">Loading…</div>
+            <div class="sticky bottom-0 bg-white border-t border-slate-200 p-4 grid grid-cols-2 gap-2">
+                <button type="button" id="drawerGrantBtn" class="px-3 py-2 bg-emerald-600 text-white rounded-lg">Grant access</button>
+                <button type="button" id="drawerExtendBtn" class="px-3 py-2 bg-blue-600 text-white rounded-lg">Extend</button>
+                <button type="button" id="drawerRevokeBtn" class="px-3 py-2 bg-amber-600 text-white rounded-lg">Revoke local</button>
+                <button type="button" id="drawerEditBtn" class="px-3 py-2 bg-slate-700 text-white rounded-lg">Edit ACL</button>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Edit user modal -->
+    <div id="editModal" class="fixed inset-0 bg-slate-900/50 z-50" style="display:none;">
+        <div class="relative top-16 mx-auto w-full max-w-md bg-white rounded-2xl shadow-xl border border-slate-200 p-5">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold">Edit user (ACL)</h3>
+                <button type="button" class="close text-2xl text-slate-400">&times;</button>
+            </div>
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-sm mb-1" for="editUsername">Username</label>
+                    <input id="editUsername" class="w-full border border-slate-300 rounded-lg px-3 py-2">
+                </div>
+                <div>
+                    <label class="block text-sm mb-1" for="editEmail">Email</label>
+                    <input id="editEmail" type="email" class="w-full border border-slate-300 rounded-lg px-3 py-2">
+                </div>
+                <div>
+                    <label class="block text-sm mb-1" for="editRole">ACL role</label>
+                    <select id="editRole" class="w-full border border-slate-300 rounded-lg px-3 py-2">
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                    <p class="text-xs text-slate-500 mt-1">Paid access is controlled via Grant access, not role.</p>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-sm mb-1" for="editFirstName">First name</label>
+                        <input id="editFirstName" class="w-full border border-slate-300 rounded-lg px-3 py-2">
+                    </div>
+                    <div>
+                        <label class="block text-sm mb-1" for="editLastName">Last name</label>
+                        <input id="editLastName" class="w-full border border-slate-300 rounded-lg px-3 py-2">
+                    </div>
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 mt-5">
+                <button type="button" class="close px-4 py-2 border border-slate-300 rounded-lg">Cancel</button>
+                <button type="button" id="saveUserBtn" class="px-4 py-2 bg-blue-600 text-white rounded-lg">Save</button>
             </div>
         </div>
     </div>
 
-    <!-- User Edit Modal -->
-    <div id="editModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50" style="display: none;">
-        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-            <div class="mt-3">
-                <div class="flex justify-between items-center mb-4">
-                    <h3 class="text-lg font-medium text-gray-900">Edit User</h3>
-                    <button class="close text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
-                </div>
-                
-                <div class="space-y-4">
-                    <div>
-                        <label for="editUsername" class="block text-sm font-medium text-gray-700 mb-1">Username:</label>
-                        <input type="text" id="editUsername" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent">
-                    </div>
-                    
-                    <div>
-                        <label for="editEmail" class="block text-sm font-medium text-gray-700 mb-1">Email:</label>
-                        <input type="email" id="editEmail" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent">
-                    </div>
-                    
-                    <div>
-                        <label for="editRole" class="block text-sm font-medium text-gray-700 mb-1">Role:</label>
-                        <select id="editRole" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent">
-                            <option value="user">User</option>
-                            <option value="premium">Premium</option>
-                            <option value="admin">Admin</option>
-                        </select>
-                    </div>
-                    
-                    <div>
-                        <label for="editFirstName" class="block text-sm font-medium text-gray-700 mb-1">First Name:</label>
-                        <input type="text" id="editFirstName" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent">
-                    </div>
-                    
-                    <div>
-                        <label for="editLastName" class="block text-sm font-medium text-gray-700 mb-1">Last Name:</label>
-                        <input type="text" id="editLastName" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent">
-                    </div>
-                </div>
-                
-                <div class="flex justify-end space-x-3 mt-6">
-                    <button class="close px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50">Cancel</button>
-                    <button id="saveUserBtn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Save</button>
-                </div>
+    <!-- Grant access modal -->
+    <div id="subscriptionModal" class="fixed inset-0 bg-slate-900/50 z-50" style="display:none;">
+        <div class="relative top-16 mx-auto w-full max-w-md bg-white rounded-2xl shadow-xl border border-slate-200 p-5">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold">Grant / manage access</h3>
+                <button type="button" class="close text-2xl text-slate-400">&times;</button>
             </div>
-        </div>
-    </div>
-
-    <!-- Subscription Management Modal -->
-    <div id="subscriptionModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50" style="display: none;">
-        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-            <div class="mt-3">
-                <div class="flex justify-between items-center mb-4">
-                    <h3 class="text-lg font-medium text-gray-900">Subscription Management</h3>
-                    <button class="close text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-sm mb-1" for="subscriptionAction">Action</label>
+                    <select id="subscriptionAction" class="w-full border border-slate-300 rounded-lg px-3 py-2">
+                        <option value="grant">Grant access (comp)</option>
+                        <option value="extend">Extend access</option>
+                        <option value="update">Update access</option>
+                        <option value="revoke">Revoke local access</option>
+                    </select>
                 </div>
-                
-                <div class="space-y-4">
+                <div class="grid grid-cols-2 gap-3">
                     <div>
-                        <label for="subscriptionAction" class="block text-sm font-medium text-gray-700 mb-1">Action:</label>
-                        <select id="subscriptionAction" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent">
-                            <option value="create">Create subscription</option>
-                            <option value="update">Update subscription</option>
-                            <option value="cancel">Cancel subscription</option>
-                        </select>
-                    </div>
-                    
-                    <div>
-                        <label for="subscriptionPlan" class="block text-sm font-medium text-gray-700 mb-1">Plan:</label>
-                        <select id="subscriptionPlan" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent">
+                        <label class="block text-sm mb-1" for="subscriptionPlan">Plan</label>
+                        <select id="subscriptionPlan" class="w-full border border-slate-300 rounded-lg px-3 py-2">
                             <option value="basic">Basic</option>
-                            <option value="premium">Premium</option>
+                            <option value="premium" selected>Premium</option>
+                            <option value="pro">Pro</option>
                         </select>
                     </div>
-                    
                     <div>
-                        <label for="subscriptionEndDate" class="block text-sm font-medium text-gray-700 mb-1">End Date:</label>
-                        <input type="datetime-local" id="subscriptionEndDate" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent">
-                    </div>
-                    
-                    <div>
-                        <label for="subscriptionSearchesLimit" class="block text-sm font-medium text-gray-700 mb-1">Search Limit:</label>
-                        <input type="number" id="subscriptionSearchesLimit" value="100" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent">
+                        <label class="block text-sm mb-1" for="subscriptionDays">Days</label>
+                        <input id="subscriptionDays" type="number" value="30" min="1" max="3650"
+                            class="w-full border border-slate-300 rounded-lg px-3 py-2">
                     </div>
                 </div>
-                
-                <div class="flex justify-end space-x-3 mt-6">
-                    <button class="close px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50">Cancel</button>
-                    <button id="saveSubscriptionBtn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Save</button>
+                <div>
+                    <label class="block text-sm mb-1" for="subscriptionEndDate">Or exact end date</label>
+                    <input id="subscriptionEndDate" type="datetime-local" class="w-full border border-slate-300 rounded-lg px-3 py-2">
                 </div>
+                <div>
+                    <label class="block text-sm mb-1" for="subscriptionSearchesLimit">Search limit</label>
+                    <input id="subscriptionSearchesLimit" type="number" value="200"
+                        class="w-full border border-slate-300 rounded-lg px-3 py-2">
+                </div>
+                <p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                    Revoke cancels local access only. Stripe billing is never cancelled from here.
+                </p>
+            </div>
+            <div class="flex justify-end gap-2 mt-5">
+                <button type="button" class="close px-4 py-2 border border-slate-300 rounded-lg">Cancel</button>
+                <button type="button" id="saveSubscriptionBtn" class="px-4 py-2 bg-blue-600 text-white rounded-lg">Apply</button>
             </div>
         </div>
     </div>
 
     <script src="/admin.js"></script>
 </body>
-</html> 
+</html>

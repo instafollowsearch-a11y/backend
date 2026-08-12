@@ -1,536 +1,745 @@
-let currentToken = null;
-let currentPage = 1;
+let currentToken = localStorage.getItem('adminToken') || '';
 let currentUserId = null;
+let activityCache = null;
 
-// Authentication
+const $ = (id) => document.getElementById(id);
+
+const authHeaders = () => ({
+  Authorization: 'Bearer ' + currentToken,
+  'Content-Type': 'application/json',
+});
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    ...options,
+    headers: { ...authHeaders(), ...(options.headers || {}) },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    logout(true);
+    throw new Error(data.message || 'Session expired');
+  }
+  return data;
+}
+
+function showAlert(message, type = 'success') {
+  const container = $('alertContainer');
+  const el = document.createElement('div');
+  el.className =
+    'p-3 rounded-xl shadow-lg text-sm border ' +
+    (type === 'success'
+      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+      : 'bg-rose-50 border-rose-200 text-rose-800');
+  el.textContent = message;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 4500);
+}
+
+function fmtDate(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString();
+}
+
+function fmtShort(value) {
+  if (!value) return '—';
+  return new Date(value).toLocaleDateString();
+}
+
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function badge(text, tone = 'slate') {
+  const tones = {
+    slate: 'bg-slate-100 text-slate-700',
+    green: 'bg-emerald-100 text-emerald-800',
+    blue: 'bg-blue-100 text-blue-800',
+    amber: 'bg-amber-100 text-amber-800',
+    rose: 'bg-rose-100 text-rose-800',
+    indigo: 'bg-indigo-100 text-indigo-800',
+  };
+  return `<span class="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${tones[tone] || tones.slate}">${escapeHtml(text)}</span>`;
+}
+
+function kpiCard(label, value, hint = '') {
+  return `
+    <div class="bg-white border border-slate-200 rounded-2xl p-4">
+      <p class="text-xs uppercase tracking-wide text-slate-500">${escapeHtml(label)}</p>
+      <p class="text-2xl font-bold text-slate-900 mt-1">${escapeHtml(String(value ?? 0))}</p>
+      ${hint ? `<p class="text-xs text-slate-400 mt-1">${escapeHtml(hint)}</p>` : ''}
+    </div>`;
+}
+
+function barRows(items, labelKey, countKey = 'count') {
+  if (!items?.length) return '<p class="text-slate-400">No data yet</p>';
+  const max = Math.max(...items.map((i) => Number(i[countKey] || 0)), 1);
+  return items
+    .map((item) => {
+      const label = item[labelKey] || '—';
+      const count = Number(item[countKey] || 0);
+      const pct = Math.round((count / max) * 100);
+      return `
+        <div>
+          <div class="flex justify-between gap-2 mb-1">
+            <span class="truncate">${escapeHtml(label)}</span>
+            <span class="text-slate-500 shrink-0">${count}</span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+        </div>`;
+    })
+    .join('');
+}
+
+function sparkline(series) {
+  if (!series?.length) return '<p class="text-slate-400 text-sm">No events in range</p>';
+  const max = Math.max(...series.map((s) => Number(s.count || 0)), 1);
+  return series
+    .map((s) => {
+      const h = Math.max(4, Math.round((Number(s.count || 0) / max) * 48));
+      return `<span title="${escapeHtml(String(s.day))}: ${s.count}" style="height:${h}px"></span>`;
+    })
+    .join('');
+}
+
+function getActiveSub(user) {
+  const now = Date.now();
+  return (user.subscriptions || []).find(
+    (s) => s.status === 'active' && s.endDate && new Date(s.endDate).getTime() > now
+  );
+}
+
+function accessLabel(user) {
+  const active = getActiveSub(user);
+  if (!active) return badge('Free', 'slate');
+  return `${badge(active.plan, 'indigo')} <span class="text-xs text-slate-500">until ${fmtShort(active.endDate)}</span>`;
+}
+
+// Auth
 async function login() {
-    const login = document.getElementById('adminLogin').value;
-    const password = document.getElementById('adminPassword').value;
-
-    try {
-        const response = await fetch('/api/admin/login', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                admin_login: login,
-                admin_password: password
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            currentToken = data.token;
-            localStorage.setItem('adminToken', currentToken);
-            document.getElementById('loginForm').style.display = 'none';
-            document.getElementById('adminPanel').style.display = 'block';
-            loadStats();
-            loadUsers();
-            
-            // Initialize tabs
-            switchTab('users');
-        } else {
-            showAlert('Authentication error: ' + data.message, 'error');
-        }
-    } catch (error) {
-        showAlert('Server connection error', 'error');
-    }
-}
-
-// Logout
-function logout() {
-    currentToken = null;
-    localStorage.removeItem('adminToken');
-    document.getElementById('loginForm').style.display = 'block';
-    document.getElementById('adminPanel').style.display = 'none';
-}
-
-// Check token on load
-window.onload = function() {
-    const token = localStorage.getItem('adminToken');
-    if (token) {
-        currentToken = token;
-        document.getElementById('loginForm').style.display = 'none';
-        document.getElementById('adminPanel').style.display = 'block';
-        loadStats();
-        loadUsers();
-        
-        // Initialize tabs
-        switchTab('users');
-    }
-};
-
-// Load statistics
-async function loadStats() {
-    try {
-        const response = await fetch('/api/admin/stats', {
-            headers: {
-                'Authorization': 'Bearer ' + currentToken
-            }
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            const stats = data.data;
-            document.getElementById('statsGrid').innerHTML = `
-                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0">
-                            <div class="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
-                                <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"></path>
-                                </svg>
-                            </div>
-                        </div>
-                        <div class="ml-4">
-                            <p class="text-sm font-medium text-gray-500">Total Users</p>
-                            <p class="text-2xl font-semibold text-gray-900">${stats.totalUsers}</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0">
-                            <div class="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
-                                <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                </svg>
-                            </div>
-                        </div>
-                        <div class="ml-4">
-                            <p class="text-sm font-medium text-gray-500">Active Users</p>
-                            <p class="text-2xl font-semibold text-gray-900">${stats.activeUsers}</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0">
-                            <div class="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
-                                <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path>
-                                </svg>
-                            </div>
-                        </div>
-                        <div class="ml-4">
-                            <p class="text-sm font-medium text-gray-500">Premium Users</p>
-                            <p class="text-2xl font-semibold text-gray-900">${stats.premiumUsers}</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0">
-                            <div class="w-8 h-8 bg-yellow-100 rounded-lg flex items-center justify-center">
-                                <svg class="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
-                                </svg>
-                            </div>
-                        </div>
-                        <div class="ml-4">
-                            <p class="text-sm font-medium text-gray-500">New This Week</p>
-                            <p class="text-2xl font-semibold text-gray-900">${stats.recentUsers}</p>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-    } catch (error) {
-        console.error('Error loading statistics:', error);
-    }
-}
-
-// Load users
-async function loadUsers(page = 1) {
-    try {
-        const search = document.getElementById('userSearch').value;
-        const role = document.getElementById('roleFilter').value;
-        
-        let url = `/api/admin/users?page=${page}`;
-        if (search) url += `&search=${encodeURIComponent(search)}`;
-        if (role) url += `&role=${role}`;
-
-        const response = await fetch(url, {
-            headers: {
-                'Authorization': 'Bearer ' + currentToken
-            }
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            displayUsers(data.data.users);
-            displayPagination(data.data.pagination, 'usersPagination', loadUsers);
-        }
-    } catch (error) {
-        console.error('Error loading users:', error);
-    }
-}
-
-// Display users
-function displayUsers(users) {
-    const tbody = document.getElementById('usersTableBody');
-    tbody.innerHTML = '';
-
-    users.forEach(user => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${user.id}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${user.username}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${user.email}</td>
-            <td class="px-6 py-4 whitespace-nowrap">
-                <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    user.role === 'admin' ? 'bg-red-100 text-red-800' :
-                    user.role === 'premium' ? 'bg-purple-100 text-purple-800' :
-                    'bg-green-100 text-green-800'
-                }">
-                    ${user.role}
-                </span>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${new Date(user.created_at).toLocaleDateString()}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                <button class="btn-edit text-blue-600 hover:text-blue-900" data-user-id="${user.id}">Edit</button>
-                <button class="btn-subscription text-green-600 hover:text-green-900" data-user-id="${user.id}">Subscription</button>
-                <button class="btn-delete text-red-600 hover:text-red-900" data-user-id="${user.id}">Delete</button>
-            </td>
-        `;
-        tbody.appendChild(row);
+  try {
+    const admin_login = $('adminLogin').value.trim();
+    const admin_password = $('adminPassword').value;
+    const res = await fetch('/api/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin_login, admin_password }),
     });
-
-    // Add event listeners
-    tbody.querySelectorAll('.btn-edit').forEach(btn => {
-        btn.addEventListener('click', () => editUser(btn.dataset.userId));
-    });
-    tbody.querySelectorAll('.btn-subscription').forEach(btn => {
-        btn.addEventListener('click', () => manageSubscription(btn.dataset.userId));
-    });
-    tbody.querySelectorAll('.btn-delete').forEach(btn => {
-        btn.addEventListener('click', () => deleteUser(btn.dataset.userId));
-    });
-}
-
-// Load subscriptions
-async function loadSubscriptions(page = 1) {
-    try {
-        const status = document.getElementById('statusFilter').value;
-        
-        let url = `/api/admin/subscriptions?page=${page}`;
-        if (status) url += `&status=${status}`;
-
-        const response = await fetch(url, {
-            headers: {
-                'Authorization': 'Bearer ' + currentToken
-            }
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            displaySubscriptions(data.data.subscriptions);
-            displayPagination(data.data.pagination, 'subscriptionsPagination', loadSubscriptions);
-        }
-    } catch (error) {
-        console.error('Error loading subscriptions:', error);
+    const data = await res.json();
+    if (!data.success) {
+      showAlert(data.message || 'Login failed', 'error');
+      return;
     }
+    currentToken = data.token;
+    localStorage.setItem('adminToken', currentToken);
+    showConsole();
+  } catch {
+    showAlert('Server connection error', 'error');
+  }
 }
 
-// Display subscriptions
-function displaySubscriptions(subscriptions) {
-    const tbody = document.getElementById('subscriptionsTableBody');
-    tbody.innerHTML = '';
-
-    subscriptions.forEach(sub => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${sub.id}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${sub.user ? sub.user.username : 'N/A'}</td>
-            <td class="px-6 py-4 whitespace-nowrap">
-                <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    sub.plan === 'premium' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
-                }">
-                    ${sub.plan}
-                </span>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap">
-                <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    sub.status === 'active' ? 'bg-green-100 text-green-800' :
-                    sub.status === 'cancelled' ? 'bg-red-100 text-red-800' :
-                    'bg-yellow-100 text-yellow-800'
-                }">
-                    ${sub.status}
-                </span>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${new Date(sub.endDate).toLocaleDateString()}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${sub.searchesUsed}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${sub.searchesLimit}</td>
-        `;
-        tbody.appendChild(row);
-    });
+function logout(silent = false) {
+  currentToken = '';
+  localStorage.removeItem('adminToken');
+  $('adminPanel').style.display = 'none';
+  $('loginForm').style.display = 'flex';
+  if (!silent) showAlert('Logged out', 'success');
 }
 
-// Search users
-function searchUsers() {
-    loadUsers(1);
+function showConsole() {
+  $('loginForm').style.display = 'none';
+  $('adminPanel').style.display = 'block';
+  switchTab('overview');
 }
 
-// Search subscriptions
-function searchSubscriptions() {
-    loadSubscriptions(1);
-}
-
-// Switch tabs
+// Tabs
 function switchTab(tabName) {
-    console.log('Switching to tab:', tabName);
-    
-    // Update active tab
-    document.querySelectorAll('.tab').forEach(tab => {
-        tab.classList.remove('border-blue-500', 'text-blue-600');
-        tab.classList.add('border-transparent', 'text-gray-500');
-    });
-    
-    // Hide all tab contents
-    document.querySelectorAll('.tab-content').forEach(content => {
-        content.style.display = 'none';
-    });
-    
-    // Activate clicked tab
-    const activeTab = document.querySelector(`[data-tab="${tabName}"]`);
-    if (activeTab) {
-        activeTab.classList.remove('border-transparent', 'text-gray-500');
-        activeTab.classList.add('border-blue-500', 'text-blue-600');
-    }
-    
-    // Show corresponding content
-    const tabContent = document.getElementById(tabName + 'Tab');
-    if (tabContent) {
-        tabContent.style.display = 'block';
-    }
+  document.querySelectorAll('.tab').forEach((tab) => {
+    const active = tab.dataset.tab === tabName;
+    tab.classList.toggle('tab-active', active);
+    tab.classList.toggle('text-white', active);
+    tab.classList.toggle('text-slate-400', !active);
+    tab.classList.toggle('border-transparent', !active);
+  });
+  document.querySelectorAll('.tab-content').forEach((el) => {
+    el.style.display = 'none';
+  });
+  const panel = $(tabName + 'Tab');
+  if (panel) panel.style.display = 'block';
 
-    // Load data for selected tab
-    if (tabName === 'users') {
-        loadUsers();
-    } else if (tabName === 'subscriptions') {
-        loadSubscriptions();
-    }
+  if (tabName === 'overview') loadOverview();
+  else if (tabName === 'users') loadUsers();
+  else if (tabName === 'subscriptions') loadSubscriptions();
+  else if (tabName === 'activity') loadActivityDashboard();
+  else if (tabName === 'searches') loadSearches();
+  else if (tabName === 'audits') loadAudits();
 }
 
-// Pagination
-function displayPagination(pagination, containerId, loadFunction) {
-    const container = document.getElementById(containerId);
-    container.innerHTML = '';
-
-    for (let i = 1; i <= pagination.totalPages; i++) {
-        const button = document.createElement('button');
-        button.textContent = i;
-        button.addEventListener('click', () => loadFunction(i));
-        button.className = `px-3 py-2 text-sm font-medium rounded-md mx-1 ${
-            i === pagination.currentPage 
-                ? 'bg-blue-600 text-white' 
-                : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-        }`;
-        container.appendChild(button);
-    }
+function displayPagination(pagination, containerId, loadFn) {
+  const container = $(containerId);
+  if (!container || !pagination) return;
+  container.innerHTML = '';
+  if (pagination.totalPages <= 1) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'flex gap-2 flex-wrap justify-center';
+  for (let i = 1; i <= pagination.totalPages; i++) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = String(i);
+    btn.className =
+      'px-3 py-1 rounded-lg border text-sm ' +
+      (i === pagination.currentPage
+        ? 'bg-blue-600 text-white border-blue-600'
+        : 'bg-white border-slate-300 hover:bg-slate-50');
+    btn.addEventListener('click', () => loadFn(i));
+    wrap.appendChild(btn);
+  }
+  container.appendChild(wrap);
 }
 
-// Edit user
+// Overview
+async function loadOverview() {
+  try {
+    const days = $('overviewDays')?.value || '7';
+    const [stats, activity] = await Promise.all([
+      api('/api/admin/stats'),
+      api(`/api/admin/activity/summary?days=${days}`),
+    ]);
+    if (!stats.success) throw new Error(stats.message || 'stats failed');
+    const s = stats.data;
+    activityCache = activity.success ? activity.data : null;
+    const a = activityCache || {};
+
+    $('statsGrid').innerHTML = [
+      kpiCard('Total users', s.totalUsers),
+      kpiCard('Paid / comp', s.premiumUsers, `${s.expiringSoon || 0} expiring ≤7d`),
+      kpiCard('Active 30d', s.activeUsers, 'last login'),
+      kpiCard('Signups 7d', s.recentUsers, `${s.signupsToday || 0} today`),
+      kpiCard('Searches 7d', s.searches7d, `${s.searchesToday || 0} today`),
+      kpiCard('Stripe linked', s.stripeLinkedUsers || 0),
+    ].join('');
+
+    $('overviewSpark').innerHTML = sparkline(a.dailySeries || []);
+    $('overviewFunnel').innerHTML = barRows(a.funnel || [], 'step');
+    $('overviewPlanMix').innerHTML = barRows(s.planMix || a.planMix || [], 'plan');
+    $('overviewFeatures').innerHTML = barRows(a.featureUsage || [], 'event');
+    $('overviewEvents').innerHTML = (a.recentEvents || [])
+      .slice(0, 20)
+      .map(
+        (e) => `
+        <div class="flex justify-between gap-3 border-b border-slate-100 py-2">
+          <div class="min-w-0">
+            <div class="font-medium truncate">${escapeHtml(e.event)}</div>
+            <div class="text-xs text-slate-500 truncate">${escapeHtml(e.path || '')}</div>
+          </div>
+          <div class="text-xs text-slate-400 shrink-0">${fmtDate(e.ts)}</div>
+        </div>`
+      )
+      .join('') || '<p class="text-slate-400">No events yet — browse the app to populate.</p>';
+
+    $('overviewAudits').innerHTML = (a.recentAudits || [])
+      .slice(0, 20)
+      .map(
+        (x) => `
+        <div class="border-b border-slate-100 py-2">
+          <div class="flex justify-between gap-2">
+            <span class="font-medium">${escapeHtml(x.action)}</span>
+            <span class="text-xs text-slate-400">${fmtDate(x.createdAt || x.created_at)}</span>
+          </div>
+          <div class="text-xs text-slate-500">by ${escapeHtml(x.actorLogin || x.actor_login || 'admin')} · target ${escapeHtml(x.targetUserId || x.target_user_id || '—')}</div>
+        </div>`
+      )
+      .join('') || '<p class="text-slate-400">No admin actions yet.</p>';
+  } catch (err) {
+    console.error(err);
+    showAlert('Failed to load overview', 'error');
+  }
+}
+
+// Users
+async function loadUsers(page = 1) {
+  try {
+    const search = $('userSearch').value.trim();
+    const role = $('roleFilter').value;
+    let url = `/api/admin/users?page=${page}&limit=15`;
+    if (search) url += `&search=${encodeURIComponent(search)}`;
+    if (role) url += `&role=${encodeURIComponent(role)}`;
+    const data = await api(url);
+    if (!data.success) throw new Error(data.message);
+    displayUsers(data.data.users);
+    displayPagination(data.data.pagination, 'usersPagination', loadUsers);
+  } catch (err) {
+    console.error(err);
+    showAlert('Failed to load users', 'error');
+  }
+}
+
+function displayUsers(users) {
+  const tbody = $('usersTableBody');
+  tbody.innerHTML = '';
+  users.forEach((user) => {
+    const role = user.role === 'premium' ? 'user' : user.role;
+    const row = document.createElement('tr');
+    row.className = 'hover:bg-slate-50';
+    row.innerHTML = `
+      <td class="px-3 py-3">
+        <div class="font-medium">@${escapeHtml(user.username)}</div>
+        <div class="text-xs text-slate-500">${escapeHtml(user.email)}</div>
+        <div class="text-[11px] text-slate-400 font-mono">${escapeHtml(user.id)}</div>
+      </td>
+      <td class="px-3 py-3">${badge(role, role === 'admin' ? 'rose' : 'green')}</td>
+      <td class="px-3 py-3">${accessLabel(user)}</td>
+      <td class="px-3 py-3">${user.stripeCustomerId ? badge('Linked', 'blue') : badge('None', 'slate')}</td>
+      <td class="px-3 py-3 text-slate-500">${fmtShort(user.created_at || user.createdAt)}</td>
+      <td class="px-3 py-3 space-x-2 whitespace-nowrap">
+        <button class="btn-view text-indigo-600 hover:underline" data-user-id="${user.id}">Details</button>
+        <button class="btn-subscription text-emerald-600 hover:underline" data-user-id="${user.id}">Access</button>
+        <button class="btn-edit text-blue-600 hover:underline" data-user-id="${user.id}">Edit</button>
+        <button class="btn-delete text-rose-600 hover:underline" data-user-id="${user.id}">Delete</button>
+      </td>`;
+    tbody.appendChild(row);
+  });
+
+  tbody.querySelectorAll('.btn-view').forEach((btn) =>
+    btn.addEventListener('click', () => openUserDrawer(btn.dataset.userId))
+  );
+  tbody.querySelectorAll('.btn-subscription').forEach((btn) =>
+    btn.addEventListener('click', () => manageSubscription(btn.dataset.userId))
+  );
+  tbody.querySelectorAll('.btn-edit').forEach((btn) =>
+    btn.addEventListener('click', () => editUser(btn.dataset.userId))
+  );
+  tbody.querySelectorAll('.btn-delete').forEach((btn) =>
+    btn.addEventListener('click', () => deleteUser(btn.dataset.userId))
+  );
+}
+
 async function editUser(userId) {
-    try {
-        const response = await fetch(`/api/admin/users/${userId}`, {
-            headers: {
-                'Authorization': 'Bearer ' + currentToken
-            }
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            const user = data.data;
-            document.getElementById('editUsername').value = user.username;
-            document.getElementById('editEmail').value = user.email;
-            document.getElementById('editRole').value = user.role;
-            document.getElementById('editFirstName').value = user.first_name || '';
-            document.getElementById('editLastName').value = user.last_name || '';
-            
-            currentUserId = userId;
-            document.getElementById('editModal').style.display = 'block';
-        }
-    } catch (error) {
-        console.error('Error loading user:', error);
-    }
+  currentUserId = userId;
+  try {
+    const data = await api(`/api/admin/users/${userId}`);
+    if (!data.success) throw new Error(data.message);
+    const user = data.data.user || data.data;
+    $('editUsername').value = user.username || '';
+    $('editEmail').value = user.email || '';
+    $('editRole').value = user.role === 'premium' ? 'user' : user.role || 'user';
+    $('editFirstName').value = user.first_name || user.firstName || '';
+    $('editLastName').value = user.last_name || user.lastName || '';
+    $('editModal').style.display = 'block';
+  } catch {
+    showAlert('Failed to load user', 'error');
+  }
 }
 
-// Save user
 async function saveUser() {
-    try {
-        const userData = {
-            username: document.getElementById('editUsername').value,
-            email: document.getElementById('editEmail').value,
-            role: document.getElementById('editRole').value,
-            first_name: document.getElementById('editFirstName').value,
-            last_name: document.getElementById('editLastName').value
-        };
-
-        const response = await fetch(`/api/admin/users/${currentUserId}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + currentToken
-            },
-            body: JSON.stringify(userData)
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            showAlert('User updated successfully', 'success');
-            closeModal();
-            loadUsers();
-        } else {
-            showAlert('Update error: ' + data.message, 'error');
-        }
-    } catch (error) {
-        showAlert('Server connection error', 'error');
+  try {
+    const body = {
+      username: $('editUsername').value.trim(),
+      email: $('editEmail').value.trim(),
+      role: $('editRole').value,
+      first_name: $('editFirstName').value.trim(),
+      last_name: $('editLastName').value.trim(),
+    };
+    const data = await api(`/api/admin/users/${currentUserId}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+    if (!data.success) {
+      showAlert(data.message || 'Update failed', 'error');
+      return;
     }
+    showAlert('User updated');
+    closeModal();
+    loadUsers();
+  } catch {
+    showAlert('Update failed', 'error');
+  }
 }
 
-// Delete user
 async function deleteUser(userId) {
-    if (!confirm('Are you sure you want to delete this user?')) {
-        return;
+  if (!confirm('Delete this user and their local subscriptions? This cannot be undone.')) return;
+  try {
+    const data = await api(`/api/admin/users/${userId}`, { method: 'DELETE' });
+    if (!data.success) {
+      showAlert(data.message || 'Delete failed', 'error');
+      return;
     }
-
-    try {
-        const response = await fetch(`/api/admin/users/${userId}`, {
-            method: 'DELETE',
-            headers: {
-                'Authorization': 'Bearer ' + currentToken
-            }
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            showAlert('User deleted successfully', 'success');
-            loadUsers();
-        } else {
-            showAlert('Delete error: ' + data.message, 'error');
-        }
-    } catch (error) {
-        showAlert('Server connection error', 'error');
-    }
+    showAlert('User deleted');
+    loadUsers();
+    loadOverview();
+  } catch {
+    showAlert('Delete failed', 'error');
+  }
 }
 
-// Manage subscription
+// Subscriptions
+async function loadSubscriptions(page = 1) {
+  try {
+    const status = $('statusFilter').value;
+    let url = `/api/admin/subscriptions?page=${page}&limit=20`;
+    if (status) url += `&status=${encodeURIComponent(status)}`;
+    const data = await api(url);
+    if (!data.success) throw new Error(data.message);
+    displaySubscriptions(data.data.subscriptions);
+    displayPagination(data.data.pagination, 'subscriptionsPagination', loadSubscriptions);
+  } catch {
+    showAlert('Failed to load subscriptions', 'error');
+  }
+}
+
+function displaySubscriptions(subscriptions) {
+  const tbody = $('subscriptionsTableBody');
+  tbody.innerHTML = '';
+  subscriptions.forEach((sub) => {
+    const source = sub.stripeSubscriptionId ? 'Stripe' : 'Local/comp';
+    const row = document.createElement('tr');
+    row.className = 'hover:bg-slate-50';
+    row.innerHTML = `
+      <td class="px-3 py-3 font-mono text-xs">${sub.id}</td>
+      <td class="px-3 py-3">${escapeHtml(sub.user?.username || 'N/A')}<div class="text-xs text-slate-400">${escapeHtml(sub.user?.email || '')}</div></td>
+      <td class="px-3 py-3">${badge(sub.plan, 'indigo')}</td>
+      <td class="px-3 py-3">${badge(sub.status, sub.status === 'active' ? 'green' : 'amber')}</td>
+      <td class="px-3 py-3">${fmtDate(sub.endDate || sub.end_date)}</td>
+      <td class="px-3 py-3">${sub.searchesUsed ?? sub.searches_used ?? 0}/${sub.searchesLimit ?? sub.searches_limit ?? '—'}</td>
+      <td class="px-3 py-3">${badge(source, source === 'Stripe' ? 'blue' : 'slate')}</td>
+      <td class="px-3 py-3">${sub.userId || sub.user_id ? `<button class="text-indigo-600 hover:underline btn-open-user" data-user-id="${sub.userId || sub.user_id}">Open</button>` : ''}</td>`;
+    tbody.appendChild(row);
+  });
+  tbody.querySelectorAll('.btn-open-user').forEach((btn) =>
+    btn.addEventListener('click', () => openUserDrawer(btn.dataset.userId))
+  );
+}
+
 function manageSubscription(userId) {
-    currentUserId = userId;
-    document.getElementById('subscriptionModal').style.display = 'block';
+  currentUserId = userId;
+  $('subscriptionModal').style.display = 'block';
 }
 
-// Save subscription
 async function saveSubscription() {
-    try {
-        const action = document.getElementById('subscriptionAction').value;
-        const plan = document.getElementById('subscriptionPlan').value;
-        const endDate = document.getElementById('subscriptionEndDate').value;
-        const searchesLimit = document.getElementById('subscriptionSearchesLimit').value;
-
-        const subscriptionData = {
-            action: action,
-            plan: plan,
-            endDate: endDate ? new Date(endDate).toISOString() : null,
-            searchesLimit: parseInt(searchesLimit)
-        };
-
-        const response = await fetch(`/api/admin/users/${currentUserId}/subscription`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + currentToken
-            },
-            body: JSON.stringify(subscriptionData)
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            showAlert('Subscription updated successfully', 'success');
-            closeModal();
-            loadUsers();
-        } else {
-            showAlert('Subscription update error: ' + data.message, 'error');
-        }
-    } catch (error) {
-        showAlert('Server connection error', 'error');
+  try {
+    const action = $('subscriptionAction').value;
+    const plan = $('subscriptionPlan').value;
+    const endDate = $('subscriptionEndDate').value;
+    const searchesLimit = parseInt($('subscriptionSearchesLimit').value, 10);
+    const days = parseInt($('subscriptionDays').value, 10) || 30;
+    const body = {
+      action,
+      plan,
+      days,
+      endDate: endDate ? new Date(endDate).toISOString() : null,
+      searchesLimit: Number.isFinite(searchesLimit) ? searchesLimit : undefined,
+    };
+    const data = await api(`/api/admin/users/${currentUserId}/subscription`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    if (!data.success) {
+      showAlert(data.message || 'Access update failed', 'error');
+      return;
     }
+    showAlert(data.message || 'Access updated');
+    closeModal();
+    loadUsers();
+    loadSubscriptions();
+    loadOverview();
+    if ($('userDrawer').style.display !== 'none') openUserDrawer(currentUserId);
+  } catch {
+    showAlert('Access update failed', 'error');
+  }
 }
 
-// Close modal
+// Activity
+async function loadActivityDashboard() {
+  try {
+    const days = $('activityDays')?.value || '7';
+    const event = $('eventFilter')?.value || '';
+    const [summary, events] = await Promise.all([
+      api(`/api/admin/activity/summary?days=${days}`),
+      api(`/api/admin/activity/events?days=${days}&limit=80${event ? `&event=${encodeURIComponent(event)}` : ''}`),
+    ]);
+    if (!summary.success) {
+      $('activityKpis').innerHTML = `<p class="text-rose-600 col-span-full">${escapeHtml(summary.message || 'Failed')}</p>`;
+      return;
+    }
+    const s = summary.data;
+    activityCache = s;
+    $('activityKpis').innerHTML = [
+      kpiCard('DAU', s.dau),
+      kpiCard('WAU', s.wau),
+      kpiCard('MAU', s.mau),
+      kpiCard('Events', s.eventsInRange),
+      kpiCard('Paid', s.activePaid),
+      kpiCard('Searches 7d', s.searches7d),
+      kpiCard('Upgrades CTA', s.upgradeCtas),
+      kpiCard('Checkouts', s.checkoutStarted),
+    ].join('');
+    $('activityFunnel').innerHTML = barRows(s.funnel || [], 'step');
+    $('activityTopEvents').innerHTML = barRows(s.topEvents || [], 'event');
+    $('activityTopPages').innerHTML = barRows(s.topPages || [], 'path');
+    $('activityTopSearches').innerHTML = barRows(s.topSearchTargets || [], 'username');
+
+    const list = events.success ? events.data.events : s.recentEvents || [];
+    $('activityEventStream').innerHTML = `
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+          <tr>
+            <th class="px-3 py-2 text-left">When</th>
+            <th class="px-3 py-2 text-left">Event</th>
+            <th class="px-3 py-2 text-left">Path</th>
+            <th class="px-3 py-2 text-left">User / anon</th>
+            <th class="px-3 py-2 text-left">Props</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          ${
+            list
+              .map(
+                (e) => `
+            <tr class="hover:bg-slate-50">
+              <td class="px-3 py-2 whitespace-nowrap text-slate-500">${fmtDate(e.ts)}</td>
+              <td class="px-3 py-2">${badge(e.event, 'blue')}</td>
+              <td class="px-3 py-2 truncate max-w-[180px]">${escapeHtml(e.path || '—')}</td>
+              <td class="px-3 py-2 font-mono text-xs">${escapeHtml(e.userId || e.user_id || e.anonId || e.anon_id || '—')}</td>
+              <td class="px-3 py-2 text-xs text-slate-500 truncate max-w-[220px]">${escapeHtml(JSON.stringify(e.props || {}))}</td>
+            </tr>`
+              )
+              .join('') ||
+            '<tr><td colspan="5" class="px-3 py-6 text-slate-400">No events</td></tr>'
+          }
+        </tbody>
+      </table>`;
+  } catch (err) {
+    console.error(err);
+    showAlert('Failed to load activity', 'error');
+  }
+}
+
+// Searches
+async function loadSearches(page = 1) {
+  try {
+    const q = $('searchHistoryQuery').value.trim();
+    let url = `/api/admin/searches?page=${page}&limit=25`;
+    if (q) url += `&search=${encodeURIComponent(q)}`;
+    const data = await api(url);
+    if (!data.success) throw new Error(data.message);
+    const tbody = $('searchesTableBody');
+    tbody.innerHTML = '';
+    data.data.searches.forEach((s) => {
+      const tr = document.createElement('tr');
+      tr.className = 'hover:bg-slate-50';
+      tr.innerHTML = `
+        <td class="px-3 py-3 text-slate-500 whitespace-nowrap">${fmtDate(s.created_at || s.createdAt)}</td>
+        <td class="px-3 py-3 font-medium">@${escapeHtml(s.targetUsername || s.target_username)}</td>
+        <td class="px-3 py-3">${badge(s.searchType || s.search_type || '—')}</td>
+        <td class="px-3 py-3">${s.user ? `@${escapeHtml(s.user.username)}` : '<span class="text-slate-400">anonymous</span>'}</td>
+        <td class="px-3 py-3">${badge(s.status || '—', s.status === 'completed' ? 'green' : 'amber')}</td>
+        <td class="px-3 py-3 font-mono text-xs">${escapeHtml(s.ipAddress || s.ip_address || '—')}</td>`;
+      tbody.appendChild(tr);
+    });
+    displayPagination(data.data.pagination, 'searchesPagination', loadSearches);
+  } catch {
+    showAlert('Failed to load searches', 'error');
+  }
+}
+
+// Audits
+async function loadAudits(page = 1) {
+  try {
+    const action = $('auditActionFilter').value;
+    let url = `/api/admin/audits?page=${page}&limit=40`;
+    if (action) url += `&action=${encodeURIComponent(action)}`;
+    const data = await api(url);
+    if (!data.success) throw new Error(data.message);
+    const tbody = $('auditsTableBody');
+    tbody.innerHTML = '';
+    data.data.audits.forEach((a) => {
+      const tr = document.createElement('tr');
+      tr.className = 'hover:bg-slate-50';
+      const target = a.targetUserId || a.target_user_id;
+      tr.innerHTML = `
+        <td class="px-3 py-3 text-slate-500 whitespace-nowrap">${fmtDate(a.createdAt || a.created_at)}</td>
+        <td class="px-3 py-3">${escapeHtml(a.actorLogin || a.actor_login)}</td>
+        <td class="px-3 py-3">${badge(a.action, 'indigo')}</td>
+        <td class="px-3 py-3">${
+          target
+            ? `<button class="text-indigo-600 hover:underline btn-open-user font-mono text-xs" data-user-id="${target}">${target}</button>`
+            : '—'
+        }</td>
+        <td class="px-3 py-3 text-xs text-slate-500 max-w-xs truncate">${escapeHtml(JSON.stringify(a.payload || {}))}</td>`;
+      tbody.appendChild(tr);
+    });
+    tbody.querySelectorAll('.btn-open-user').forEach((btn) =>
+      btn.addEventListener('click', () => openUserDrawer(btn.dataset.userId))
+    );
+    displayPagination(data.data.pagination, 'auditsPagination', loadAudits);
+  } catch {
+    showAlert('Failed to load audits', 'error');
+  }
+}
+
+// User drawer
+async function openUserDrawer(userId) {
+  currentUserId = userId;
+  const drawer = $('userDrawer');
+  const body = $('userDrawerBody');
+  drawer.style.display = 'block';
+  body.innerHTML = 'Loading…';
+  try {
+    const data = await api(`/api/admin/users/${userId}`);
+    if (!data.success) {
+      body.innerHTML = `<p class="text-rose-600">${escapeHtml(data.message || 'Failed')}</p>`;
+      return;
+    }
+    const {
+      user: u,
+      localEntitlement: entitlement,
+      stripeCustomerId,
+      stripeStatus: stripe,
+      searchCount,
+      recentSearches: searches = [],
+      recentAudits: audits = [],
+      activityTimeline = [],
+      allSubscriptions = [],
+    } = data.data;
+
+    body.innerHTML = `
+      <div>
+        <p class="section-title mb-2">Identity</p>
+        <p class="text-lg font-semibold">@${escapeHtml(u.username)}</p>
+        <p>${escapeHtml(u.email || '')}</p>
+        <p class="text-slate-500 mt-1">ACL: ${escapeHtml(u.role === 'premium' ? 'user' : u.role)} · Last login: ${fmtDate(u.lastLogin || u.last_login)}</p>
+        <p class="font-mono text-[11px] text-slate-400 mt-1">${escapeHtml(u.id)}</p>
+      </div>
+      <div>
+        <p class="section-title mb-2">Local entitlement</p>
+        ${
+          entitlement
+            ? `<p>Plan <strong>${escapeHtml(entitlement.plan)}</strong> · ${escapeHtml(entitlement.status)}</p>
+               <p>Ends ${fmtDate(entitlement.endDate)}</p>
+               <p>Searches ${entitlement.searchesUsed}/${entitlement.searchesLimit}</p>`
+            : '<p class="text-slate-500">None (free)</p>'
+        }
+      </div>
+      <div>
+        <p class="section-title mb-2">Stripe (read-only)</p>
+        <p class="text-xs break-all">Customer: ${escapeHtml(stripeCustomerId || u.stripeCustomerId || '—')}</p>
+        ${
+          stripe && !stripe.error
+            ? `<p class="mt-1">Status: ${escapeHtml(stripe.status || '—')} · ${escapeHtml(stripe.name || stripe.plan || '')}</p>`
+            : `<p class="text-slate-500 mt-1">${escapeHtml(stripe?.error || 'No live Stripe subscription')}</p>`
+        }
+      </div>
+      <div>
+        <p class="section-title mb-2">Subscription history</p>
+        <ul class="space-y-1 text-xs">
+          ${(allSubscriptions || [])
+            .map(
+              (s) =>
+                `<li>${badge(s.plan)} ${badge(s.status, s.status === 'active' ? 'green' : 'amber')} ends ${fmtShort(s.endDate)} ${s.stripeSubscriptionId ? '· Stripe' : '· Local'}</li>`
+            )
+            .join('') || '<li class="text-slate-400">—</li>'}
+        </ul>
+      </div>
+      <div>
+        <p class="section-title mb-2">Searches (${searchCount ?? searches.length})</p>
+        <ul class="space-y-1 text-xs">
+          ${searches
+            .slice(0, 8)
+            .map((s) => `<li>@${escapeHtml(s.targetUsername)} · ${escapeHtml(s.searchType)} · ${fmtDate(s.created_at || s.createdAt)}</li>`)
+            .join('') || '<li class="text-slate-400">—</li>'}
+        </ul>
+      </div>
+      <div>
+        <p class="section-title mb-2">Activity timeline</p>
+        <ul class="space-y-1 text-xs max-h-48 overflow-y-auto">
+          ${activityTimeline
+            .map((e) => `<li><strong>${escapeHtml(e.event)}</strong> ${escapeHtml(e.path || '')} · ${fmtDate(e.ts)}</li>`)
+            .join('') || '<li class="text-slate-400">No tracked events for this user yet</li>'}
+        </ul>
+      </div>
+      <div>
+        <p class="section-title mb-2">Admin actions on this user</p>
+        <ul class="space-y-1 text-xs">
+          ${audits
+            .slice(0, 10)
+            .map((a) => `<li>${escapeHtml(a.action)} · ${fmtDate(a.createdAt || a.created_at)}</li>`)
+            .join('') || '<li class="text-slate-400">—</li>'}
+        </ul>
+      </div>`;
+  } catch {
+    body.innerHTML = '<p class="text-rose-600">Server connection error</p>';
+  }
+}
+
+function closeUserDrawer() {
+  $('userDrawer').style.display = 'none';
+}
+
 function closeModal() {
-    document.getElementById('editModal').style.display = 'none';
-    document.getElementById('subscriptionModal').style.display = 'none';
+  $('editModal').style.display = 'none';
+  $('subscriptionModal').style.display = 'none';
 }
 
-// Show alert
-function showAlert(message, type) {
-    const container = document.getElementById('alertContainer');
-    const alert = document.createElement('div');
-    alert.className = `mb-4 p-4 rounded-lg shadow-lg ${
-        type === 'success' 
-            ? 'bg-green-100 border border-green-400 text-green-700' 
-            : 'bg-red-100 border border-red-400 text-red-700'
-    }`;
-    alert.textContent = message;
-    
-    container.appendChild(alert);
-    
-    setTimeout(() => {
-        alert.remove();
-    }, 5000);
-}
+document.addEventListener('DOMContentLoaded', () => {
+  $('loginBtn').addEventListener('click', login);
+  $('adminPassword').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') login();
+  });
+  $('logoutBtn').addEventListener('click', () => logout());
+  $('refreshAllBtn').addEventListener('click', () => {
+    const active = document.querySelector('.tab.tab-active')?.dataset.tab || 'overview';
+    switchTab(active);
+    showAlert('Refreshed');
+  });
 
-// Add event listeners when DOM is loaded
-document.addEventListener('DOMContentLoaded', function() {
-    // Add event listeners for login and logout buttons
-    document.getElementById('loginBtn').addEventListener('click', login);
-    document.getElementById('logoutBtn').addEventListener('click', logout);
+  document.querySelectorAll('.tab').forEach((tab) => {
+    tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+  });
+  document.querySelectorAll('[data-goto]').forEach((btn) => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.goto));
+  });
 
-    // Add event listeners for tabs
-    document.querySelectorAll('.tab').forEach(tab => {
-        tab.addEventListener('click', (e) => {
-            const tabName = e.target.getAttribute('data-tab');
-            if (tabName) {
-                switchTab(tabName);
-            }
-        });
-    });
+  $('userSearchBtn')?.addEventListener('click', () => loadUsers(1));
+  $('userSearch')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') loadUsers(1);
+  });
+  $('roleFilter')?.addEventListener('change', () => loadUsers(1));
+  $('statusFilter')?.addEventListener('change', () => loadSubscriptions(1));
+  $('overviewDays')?.addEventListener('change', loadOverview);
+  $('activityDays')?.addEventListener('change', loadActivityDashboard);
+  $('eventFilter')?.addEventListener('change', loadActivityDashboard);
+  $('searchHistoryBtn')?.addEventListener('click', () => loadSearches(1));
+  $('auditActionFilter')?.addEventListener('change', () => loadAudits(1));
 
-    // Add event listeners for search inputs
-    document.getElementById('userSearch').addEventListener('keyup', searchUsers);
-    document.getElementById('roleFilter').addEventListener('change', searchUsers);
-    document.getElementById('statusFilter').addEventListener('change', searchSubscriptions);
+  document.querySelectorAll('.close').forEach((btn) => btn.addEventListener('click', closeModal));
+  $('saveUserBtn').addEventListener('click', saveUser);
+  $('saveSubscriptionBtn').addEventListener('click', saveSubscription);
+  $('closeUserDrawer').addEventListener('click', closeUserDrawer);
+  $('userDrawerBackdrop').addEventListener('click', closeUserDrawer);
 
-    // Add event listeners for modal close buttons
-    document.querySelectorAll('.close').forEach(closeBtn => {
-        closeBtn.addEventListener('click', closeModal);
-    });
+  $('drawerGrantBtn').addEventListener('click', () => {
+    $('subscriptionAction').value = 'grant';
+    manageSubscription(currentUserId);
+  });
+  $('drawerExtendBtn').addEventListener('click', () => {
+    $('subscriptionAction').value = 'extend';
+    manageSubscription(currentUserId);
+  });
+  $('drawerRevokeBtn').addEventListener('click', async () => {
+    if (!currentUserId || !confirm('Revoke local access only? Stripe stays untouched.')) return;
+    $('subscriptionAction').value = 'revoke';
+    await saveSubscription();
+  });
+  $('drawerEditBtn').addEventListener('click', () => editUser(currentUserId));
 
-    // Add event listeners for modal save buttons
-    document.getElementById('saveUserBtn').addEventListener('click', saveUser);
-    document.getElementById('saveSubscriptionBtn').addEventListener('click', saveSubscription);
+  window.addEventListener('click', (event) => {
+    if (event.target === $('editModal') || event.target === $('subscriptionModal')) closeModal();
+  });
 
-    // Close modal when clicking outside
-    window.addEventListener('click', function(event) {
-        const editModal = document.getElementById('editModal');
-        const subscriptionModal = document.getElementById('subscriptionModal');
-        
-        if (event.target === editModal) {
-            closeModal();
-        }
-        if (event.target === subscriptionModal) {
-            closeModal();
-        }
-    });
-}); 
+  if (currentToken) showConsole();
+});

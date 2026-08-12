@@ -62,7 +62,7 @@ router.get('/stats', protect, async (req, res, next) => {
       success: true,
       data: {
         usage: null,
-        subscription: user?.hasActiveSubscription?.() || false,
+        subscription: user ? await user.hasActiveSubscription() : false,
         statistics: {
           totalSearches,
           todaySearches,
@@ -107,7 +107,10 @@ router.get('/all', protect, authorize('admin'), async (req, res, next) => {
   }
 });
 
-// Update user role (admin only)
+/**
+ * ACL role-only update (legacy path). Does NOT grant paid entitlement.
+ * Use POST /api/admin/users/:userId/subscription for comps.
+ */
 router.put('/:userId/subscription', protect, authorize('admin'), async (req, res, next) => {
   try {
     const { userId } = req.params;
@@ -122,13 +125,16 @@ router.put('/:userId/subscription', protect, authorize('admin'), async (req, res
     }
 
     if (role) {
-      user.role = role;
+      const normalized = String(role).toLowerCase();
+      // premium is not an ACL role — entitlement lives on subscriptions
+      user.role = normalized === 'admin' ? 'admin' : 'user';
       await user.save();
     }
 
     res.status(200).json({
       success: true,
-      data: user
+      data: user,
+      note: 'Role-only update. Paid access requires a subscriptions row (admin grant or Stripe).',
     });
   } catch (error) {
     next(error);

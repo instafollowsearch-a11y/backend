@@ -619,10 +619,21 @@ export const analyzeRedFlags = (userData) => {
   return redFlags;
 }
 
+/**
+ * Fetch likers sample. Throws on failure.
+ * @param {string|number} mediaId
+ */
+export const getPostLikersOrThrow = async (mediaId) => {
+  const response = await hikerApi.get("/v2/media/likers", { params: { id: mediaId } });
+  return response.data.users?.map((record) => ({ ...record, postId: mediaId })) || [];
+};
+
+/**
+ * Fetch likers sample; returns [] on error (legacy callers).
+ */
 export const getPostLikers = async (mediaId) => {
   try {
-    const response = await hikerApi.get("/v2/media/likers", { params: { id: mediaId } });
-    return response.data.users?.map((record) => ({ ...record, postId: mediaId })) || [];
+    return await getPostLikersOrThrow(mediaId);
   } catch (err) {
     console.error(`Error fetching likers for media ${mediaId}:`, err.message);
     return [];
@@ -642,40 +653,93 @@ export const getPostComments = async (mediaId) => {
   }
 };
 
-// New helper: fetch comments with a hard cap using pagination
-export const getPostComentsWithCap = async (mediaId, cap = 60) => {
+/**
+ * Match comment author against target user ids / username.
+ */
+export const commentMatchesUser = (comment, targetUserId, targetUsername) => {
+  const commentIds = [comment?.user_id, comment?.user?.pk, comment?.user?.id]
+    .filter((v) => v != null)
+    .map(String);
+  if (targetUserId != null && commentIds.includes(String(targetUserId))) {
+    return true;
+  }
+  const uname = String(targetUsername || '').toLowerCase();
+  if (!uname) return false;
+  const commentUser = comment?.user?.username || comment?.username || '';
+  return String(commentUser).toLowerCase() === uname;
+};
+
+/**
+ * Fetch comments with pagination, optional early-exit when target user found.
+ * Includes preview_child_comments in the scanned set (no extra request).
+ * @param {string|number} mediaId
+ * @param {number} cap
+ * @param {{ targetUserId?: string|number, targetUsername?: string, earlyExit?: boolean }} [opts]
+ */
+export const getPostComentsWithCap = async (mediaId, cap = 60, opts = {}) => {
+  const { targetUserId, targetUsername, earlyExit = false } = opts;
   let comments = [];
   let nextPageId = undefined;
+  let foundTarget = false;
 
-  try {
-    while (comments.length < cap) {
-      const res = await hikerApi.get("/v2/media/comments", {
-        params: {
-          id: mediaId,
-          page_id: nextPageId,
-        },
-      });
-
-      const data = res?.data?.response || { comments: [] };
-      const pageComments = data.comments?.map((record) => ({ ...record, postId: mediaId })) || [];
-
-      if (pageComments.length === 0) {
-        break;
+  const absorb = (list) => {
+    for (const record of list || []) {
+      const mapped = { ...record, postId: mediaId };
+      comments.push(mapped);
+      if (
+        earlyExit &&
+        targetUserId != null &&
+        commentMatchesUser(mapped, targetUserId, targetUsername)
+      ) {
+        foundTarget = true;
       }
-
-      comments = comments.concat(pageComments);
-
-      // Stop if no more pages or we've reached the cap
-      nextPageId = res?.data?.next_page_id;
-      if (!nextPageId) {
-        break;
+      const children = record.preview_child_comments || record.child_comments || [];
+      for (const child of children) {
+        const childMapped = { ...child, postId: mediaId };
+        comments.push(childMapped);
+        if (
+          earlyExit &&
+          targetUserId != null &&
+          commentMatchesUser(childMapped, targetUserId, targetUsername)
+        ) {
+          foundTarget = true;
+        }
       }
     }
+  };
 
-    return comments.slice(0, cap);
+  while (comments.length < cap) {
+    const res = await hikerApi.get("/v2/media/comments", {
+      params: {
+        id: mediaId,
+        page_id: nextPageId,
+      },
+    });
+
+    const data = res?.data?.response || { comments: [] };
+    const pageComments = data.comments || [];
+
+    if (pageComments.length === 0) break;
+
+    absorb(pageComments);
+    if (earlyExit && foundTarget) break;
+
+    nextPageId = res?.data?.next_page_id;
+    if (!nextPageId) break;
+  }
+
+  return comments.slice(0, cap);
+};
+
+/**
+ * Soft wrapper for capped comments (empty on error).
+ */
+export const getPostComentsWithCapSafe = async (mediaId, cap = 60, opts = {}) => {
+  try {
+    return await getPostComentsWithCap(mediaId, cap, opts);
   } catch (err) {
     console.error(`Error fetching capped comments for media ${mediaId}:`, err.message);
-    return comments.slice(0, cap);
+    return [];
   }
 };
 

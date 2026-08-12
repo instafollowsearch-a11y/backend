@@ -146,9 +146,13 @@ User.prototype.matchPassword = async function(enteredPassword) {
 
 
 
-User.prototype.hasActiveSubscription = function() {
-  // Всегда возвращаем true, так как подписки теперь в отдельной таблице
-  return true;
+/**
+ * Postgres subscription row only (active + not expired).
+ * For hybrid Stripe|DB gates use entitlementService.assertUserHasPaidAccess.
+ */
+User.prototype.hasActiveSubscription = async function () {
+  const { hasActiveDbSubscription } = await import('../services/entitlementService.js');
+  return hasActiveDbSubscription(this.id);
 };
 
 

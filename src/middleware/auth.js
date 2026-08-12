@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import { assertUserHasPaidAccess } from '../services/entitlementService.js';
 
 export const protect = async (req, res, next) => {
   try {
@@ -50,6 +51,39 @@ export const authorize = (...roles) => {
     }
     next();
   };
+};
+
+/**
+ * Must run after protect. Allows admin, active DB sub, or active/trialing Stripe.
+ */
+export const requireActiveSubscription = async (req, res, next) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Not authorized to access this route',
+      });
+    }
+
+    if (req.paidAccessChecked === true) {
+      return next();
+    }
+
+    const hasAccess = await assertUserHasPaidAccess(req.user);
+    req.paidAccessChecked = true;
+    req.hasPaidAccess = hasAccess;
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        error: 'Active subscription required',
+      });
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
 };
 
 export const optionalAuth = async (req, res, next) => {

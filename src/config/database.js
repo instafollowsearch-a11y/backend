@@ -39,11 +39,11 @@ const connectDB = async () => {
     await sequelize.authenticate();
     console.log('📊 PostgreSQL Connected successfully');
     
-    // Импортируем модели для правильной синхронизации
-    import('../models/index.js');
-    
-    // Run migrations instead of sync
-    if (process.env.NODE_ENV === 'development') {
+    // Import models so they register on the sequelize instance
+    await import('../models/index.js');
+
+    // Run migrations locally / when not production (NODE_ENV may be unset)
+    if (process.env.NODE_ENV !== 'production') {
       const { runMigrations } = await import('./migrations.js');
       await runMigrations();
     }

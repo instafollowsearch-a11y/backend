@@ -172,6 +172,58 @@ const migrations = [
         DROP CONSTRAINT IF EXISTS users_username_key;
       `);
     }
+  },
+  {
+    name: '009_allow_pro_subscription_plan',
+    up: async () => {
+      // subscriptions.plan is VARCHAR(20) — already accepts 'pro'.
+      // Ensures column exists for older DBs that skipped 004.
+      await sequelize.query(`
+        ALTER TABLE subscriptions
+        ALTER COLUMN plan TYPE VARCHAR(20);
+      `);
+    }
+  },
+  {
+    name: '010_create_admin_audit_logs',
+    up: async () => {
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS admin_audit_logs (
+          id SERIAL PRIMARY KEY,
+          actor_login VARCHAR(255) NOT NULL,
+          action VARCHAR(255) NOT NULL,
+          target_user_id UUID NULL,
+          payload JSONB DEFAULT '{}'::jsonb,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS admin_audit_logs_created_at_idx ON admin_audit_logs (created_at);
+        CREATE INDEX IF NOT EXISTS admin_audit_logs_target_user_id_idx ON admin_audit_logs (target_user_id);
+        CREATE INDEX IF NOT EXISTS admin_audit_logs_action_idx ON admin_audit_logs (action);
+      `);
+    }
+  },
+  {
+    name: '011_create_analytics_events',
+    up: async () => {
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS analytics_events (
+          id BIGSERIAL PRIMARY KEY,
+          event VARCHAR(64) NOT NULL,
+          path VARCHAR(512) NULL,
+          user_id UUID NULL,
+          anon_id VARCHAR(64) NULL,
+          props JSONB DEFAULT '{}'::jsonb,
+          utm_source VARCHAR(128) NULL,
+          utm_medium VARCHAR(128) NULL,
+          utm_campaign VARCHAR(128) NULL,
+          ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS analytics_events_ts_idx ON analytics_events (ts);
+        CREATE INDEX IF NOT EXISTS analytics_events_event_idx ON analytics_events (event);
+        CREATE INDEX IF NOT EXISTS analytics_events_user_id_idx ON analytics_events (user_id);
+        CREATE INDEX IF NOT EXISTS analytics_events_path_idx ON analytics_events (path);
+      `);
+    }
   }
 ];
 

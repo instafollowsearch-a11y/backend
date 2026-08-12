@@ -3,20 +3,21 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
-import rateLimit from 'express-rate-limit';
-
 // Import routes
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/user.js';
 import instagramRoutes from './routes/instagram.js';
 import analyticsRoutes from './routes/analytics.js';
+import eventsRoutes from './routes/events.js';
 import proxyRoutes from './routes/proxyRoutes.js';
 import adminRoutes from './routes/admin.js';
 import stripeRoutes from './routes/stripeRoutes.js';
+import { stripeWebhook } from './controllers/stripeController.js';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler.js';
 import { notFound } from './middleware/notFound.js';
+import { authLimiter } from './middleware/rateLimiters.js';
 
 // Import database connection
 import { connectDB } from './config/database.js';
@@ -26,7 +27,7 @@ import './models/index.js';
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = Number.parseInt(process.env.PORT, 10) || 5055;
 
 // Connect to database
 connectDB();
@@ -66,28 +67,12 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rate limiting for specific routes only (not for regular search)
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // 10 attempts per 15 minutes for auth
-  message: {
-    error: 'Too many authentication attempts, please try again later.',
-    retryAfter: 15 * 60
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000, // High limit for API calls
-  message: {
-    error: 'Too many API requests, please try again later.',
-    retryAfter: 15 * 60
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+// Stripe webhook needs raw body — mount before express.json
+app.post(
+  '/api/payment/webhook',
+  express.raw({ type: 'application/json' }),
+  stripeWebhook
+);
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
@@ -114,11 +99,12 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API routes
-app.use('/api/auth', authRoutes);
+// API routes — auth rate-limited; Instagram search/expensive limits live on those routes
+app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/instagram', instagramRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/events', eventsRoutes);
 app.use('/api/proxy', proxyRoutes);
 app.use('/api/payment', stripeRoutes);
 app.use('/api/admin', adminRoutes);

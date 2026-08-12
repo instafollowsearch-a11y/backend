@@ -16,7 +16,7 @@ const Subscription = sequelize.define('Subscription', {
     }
   },
   plan: {
-    type: DataTypes.ENUM('basic', 'premium'),
+    type: DataTypes.ENUM('basic', 'premium', 'pro'),
     allowNull: false,
     defaultValue: 'basic'
   },

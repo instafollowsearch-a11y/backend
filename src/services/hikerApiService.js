@@ -1,7 +1,135 @@
 import InstagramCache from "../models/InstagramCache.js";
 import { useApifyForFollowLists, getApifyListMaxCount } from "./apifyDataDopingService.js";
 import { firstPageFromFullList, getListPageSize } from "./utils/listPagination.js";
-import { getUserInfo, getFollowers, getFollowing, getUserStories, updateCache, getPostLikers, getPostComments, getNextFollowersData, getNextFollowingData, fetchUserMedias, fetchMoreUserMedias, checkFollowsViaHiker } from "./utils/hikerHelperFunctions.js";
+import {
+  getUserInfo,
+  getFollowers,
+  getFollowing,
+  getUserStories,
+  updateCache,
+  getPostLikers,
+  getPostLikersOrThrow,
+  getPostComments,
+  getPostComentsWithCap,
+  commentMatchesUser,
+  getNextFollowersData,
+  getNextFollowingData,
+  fetchUserMedias,
+  fetchMoreUserMedias,
+  checkFollowsViaHiker,
+} from "./utils/hikerHelperFunctions.js";
+
+const SHARED_ACTIVITY_POST_LIMIT = Math.max(
+  1,
+  Number(process.env.SHARED_ACTIVITY_POST_LIMIT || 10)
+);
+const SHARED_ACTIVITY_COMMENT_CAP = Math.max(
+  1,
+  Number(process.env.SHARED_ACTIVITY_COMMENT_CAP || 40)
+);
+const SHARED_ACTIVITY_CONCURRENCY = Math.max(
+  1,
+  Number(process.env.SHARED_ACTIVITY_CONCURRENCY || 5)
+);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Run async tasks with a fixed concurrency pool.
+ * @template T
+ * @param {Array<() => Promise<T>>} tasks
+ * @param {number} concurrency
+ * @returns {Promise<T[]>}
+ */
+const mapPool = async (tasks, concurrency) => {
+  const results = new Array(tasks.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, tasks.length) },
+    async () => {
+      while (nextIndex < tasks.length) {
+        const i = nextIndex++;
+        results[i] = await tasks[i]();
+      }
+    }
+  );
+  await Promise.all(workers);
+  return results;
+};
+
+const mediaIdFromPost = (post) => post?.pk ?? post?.id;
+
+const likerMatchesUser = (liker, targetUserId, targetUsername) => {
+  if (!liker) return false;
+  const ids = [liker.id, liker.pk]
+    .filter((v) => v != null)
+    .map(String);
+  if (ids.includes(String(targetUserId))) return true;
+  const uname = String(targetUsername || "").toLowerCase();
+  if (!uname) return false;
+  return String(liker.username || "").toLowerCase() === uname;
+};
+
+const summarizePost = (post) => ({
+  postId: mediaIdFromPost(post),
+  code: post.code,
+  caption: post.caption?.text || "",
+  imageUrl: post.image_versions2?.candidates?.[0]?.url || null,
+});
+
+/**
+ * Fetch likers + comments for one post with one retry; never silent empty on hard fail.
+ */
+const fetchPostEngagement = async ({
+  post,
+  targetUserId,
+  targetUsername,
+  commentCap,
+}) => {
+  const mediaId = mediaIdFromPost(post);
+  let likers = [];
+  let comments = [];
+  let likersError = null;
+  let commentsError = null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      likers = await getPostLikersOrThrow(mediaId);
+      likersError = null;
+      break;
+    } catch (err) {
+      likersError = err.message || "likers_failed";
+      if (attempt === 0) await sleep(400);
+    }
+  }
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      comments = await getPostComentsWithCap(mediaId, commentCap, {
+        targetUserId,
+        targetUsername,
+        earlyExit: true,
+      });
+      commentsError = null;
+      break;
+    } catch (err) {
+      commentsError = err.message || "comments_failed";
+      if (attempt === 0) await sleep(400);
+    }
+  }
+
+  return {
+    post,
+    mediaId,
+    likers,
+    comments,
+    failed: Boolean(likersError || commentsError),
+    errors: {
+      likers: likersError,
+      comments: commentsError,
+    },
+  };
+};
 
 const listStorageCap = (forPremium) =>
   Math.min(getApifyListMaxCount(forPremium), 500);
@@ -406,7 +534,6 @@ export const getAdvancedActivity = async (
 export const getSharedActivity = async (username1, username2) => {
   const startTime = Date.now();
   try {
-    // Get user info first
     const [firstUser, secondUser] = await Promise.all([
       getUserInfo(username1),
       getUserInfo(username2),
@@ -415,7 +542,6 @@ export const getSharedActivity = async (username1, username2) => {
     const firstUserId = firstUser.id || firstUser.pk;
     const secondUserId = secondUser.id || secondUser.pk;
 
-    // Follow relation via Hiker search-until-found (not Apify 500-cap lists)
     const [firstFollowsSecond, secondFollowsFirst] = await Promise.all([
       checkFollowsViaHiker({ sourceUser: firstUser, targetUser: secondUser }),
       checkFollowsViaHiker({ sourceUser: secondUser, targetUser: firstUser }),
@@ -423,101 +549,81 @@ export const getSharedActivity = async (username1, username2) => {
     const isFirstFollowingSecond = firstFollowsSecond.follows;
     const isSecondFollowingFirst = secondFollowsFirst.follows;
 
-    // Fetch recent posts for both users
     const [firstUserPosts, secondUserPosts] = await Promise.all([
-      fetchUserMedias(firstUserId),
-      fetchUserMedias(secondUserId),
+      fetchUserMedias(firstUserId, SHARED_ACTIVITY_POST_LIMIT),
+      fetchUserMedias(secondUserId, SHARED_ACTIVITY_POST_LIMIT),
     ]);
 
-    // Fetch likers + comments for both users' posts in one Promise.all
+    const firstMedias = firstUserPosts?.medias || [];
+    const secondMedias = secondUserPosts?.medias || [];
+
+    const firstTasks = firstMedias.map(
+      (post) => () =>
+        fetchPostEngagement({
+          post,
+          targetUserId: secondUserId,
+          targetUsername: secondUser.username,
+          commentCap: SHARED_ACTIVITY_COMMENT_CAP,
+        })
+    );
+    const secondTasks = secondMedias.map(
+      (post) => () =>
+        fetchPostEngagement({
+          post,
+          targetUserId: firstUserId,
+          targetUsername: firstUser.username,
+          commentCap: SHARED_ACTIVITY_COMMENT_CAP,
+        })
+    );
+
     const [firstUserPostData, secondUserPostData] = await Promise.all([
-      Promise.all(
-        firstUserPosts?.medias?.map(async (post) => {
-          const [likers, comments] = await Promise.all([
-            getPostLikers(post.id),
-            getPostComments(post.id),
-          ]);
-          return { post, likers, comments };
-        })
-      ),
-      Promise.all(
-        secondUserPosts?.medias?.map(async (post) => {
-          const [likers, comments] = await Promise.all([
-            getPostLikers(post.id),
-            getPostComments(post.id),
-          ]);
-          return { post, likers, comments };
-        })
-      ),
+      mapPool(firstTasks, SHARED_ACTIVITY_CONCURRENCY),
+      mapPool(secondTasks, SHARED_ACTIVITY_CONCURRENCY),
     ]);
 
-    // Analyze interactions
+    const partialErrors = [];
     const firstUserPostsLikedBySecond = [];
     const secondUserPostsLikedByFirst = [];
     const firstUserPostsCommentedBySecond = [];
     const secondUserPostsCommentedByFirst = [];
 
-    for (const { post, likers, comments } of firstUserPostData) {
-      if (
-        likers.some(
-          (u) =>
-            String(u.id) === String(secondUserId) ||
-            u.username === secondUser.username
-        )
-      ) {
-        firstUserPostsLikedBySecond.push({
-          postId: post.id,
-          code: post.code,
-          caption: post.caption?.text || "",
-          imageUrl: post.image_versions2?.candidates?.[0]?.url || null,
+    for (const row of firstUserPostData) {
+      if (row.failed) {
+        partialErrors.push({
+          owner: "firstUser",
+          mediaId: row.mediaId,
+          errors: row.errors,
         });
       }
-
+      if (row.likers.some((u) => likerMatchesUser(u, secondUserId, secondUser.username))) {
+        firstUserPostsLikedBySecond.push(summarizePost(row.post));
+      }
       if (
-        comments.some(
-          (c) =>
-            String(c.user_id) === String(secondUserId) ||
-            c.user?.username === secondUser.username
+        row.comments.some((c) =>
+          commentMatchesUser(c, secondUserId, secondUser.username)
         )
       ) {
-        firstUserPostsCommentedBySecond.push({
-          postId: post.id,
-          code: post.code,
-          caption: post.caption?.text || "",
-          imageUrl: post.image_versions2?.candidates?.[0]?.url || null,
-        });
+        firstUserPostsCommentedBySecond.push(summarizePost(row.post));
       }
     }
 
-    for (const { post, likers, comments } of secondUserPostData) {
-      if (
-        likers.some(
-          (u) =>
-            String(u.id) === String(firstUserId) ||
-            u.username === firstUser.username
-        )
-      ) {
-        secondUserPostsLikedByFirst.push({
-          postId: post.id,
-          code: post.code,
-          caption: post.caption?.text || "",
-          imageUrl: post.image_versions2?.candidates?.[0]?.url || null,
+    for (const row of secondUserPostData) {
+      if (row.failed) {
+        partialErrors.push({
+          owner: "secondUser",
+          mediaId: row.mediaId,
+          errors: row.errors,
         });
       }
-
+      if (row.likers.some((u) => likerMatchesUser(u, firstUserId, firstUser.username))) {
+        secondUserPostsLikedByFirst.push(summarizePost(row.post));
+      }
       if (
-        comments.some(
-          (c) =>
-            String(c.user_id) === String(firstUserId) ||
-            c.user?.username === firstUser.username
+        row.comments.some((c) =>
+          commentMatchesUser(c, firstUserId, firstUser.username)
         )
       ) {
-        secondUserPostsCommentedByFirst.push({
-          postId: post.id,
-          code: post.code,
-          caption: post.caption?.text || "",
-          imageUrl: post.image_versions2?.candidates?.[0]?.url || null,
-        });
+        secondUserPostsCommentedByFirst.push(summarizePost(row.post));
       }
     }
 
@@ -530,8 +636,12 @@ export const getSharedActivity = async (username1, username2) => {
       secondUserPostsLikedByFirst,
       firstUserPostsCommentedBySecond,
       secondUserPostsCommentedByFirst,
-      firstUserPostLength: firstUserPostData.length,
-      secondUserPostLength: secondUserPostData.length,
+      firstUserPostLength: firstMedias.length,
+      secondUserPostLength: secondMedias.length,
+      postScanLimit: SHARED_ACTIVITY_POST_LIMIT,
+      commentScanCap: SHARED_ACTIVITY_COMMENT_CAP,
+      likesAreSampled: true,
+      partialErrors,
       processingTime: Date.now() - startTime,
     };
   } catch (error) {

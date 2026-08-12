@@ -7,8 +7,15 @@ import {
   deleteUser,
   getUserStats,
   manageUserSubscription,
-  getAllSubscriptions
+  getAllSubscriptions,
+  getSearchHistoryAdmin,
+  getAuditLogs,
 } from '../controllers/adminController.js';
+import {
+  getActivitySummary,
+  getUserActivityTimeline,
+  getRecentEvents,
+} from '../controllers/adminActivityController.js';
 
 const router = express.Router();
 
@@ -30,11 +37,20 @@ router.get('/users/:id', getUserById);
 router.put('/users/:id', updateUser);
 router.delete('/users/:id', deleteUser);
 
-// Statistics
+// Statistics / ops overview
 router.get('/stats', getUserStats);
 
 // Subscription management
 router.get('/subscriptions', getAllSubscriptions);
 router.post('/users/:userId/subscription', manageUserSubscription);
+
+// Product usage
+router.get('/searches', getSearchHistoryAdmin);
+router.get('/audits', getAuditLogs);
+
+// First-party activity dashboard
+router.get('/activity/summary', getActivitySummary);
+router.get('/activity/events', getRecentEvents);
+router.get('/activity/users/:userId', getUserActivityTimeline);
 
 export default router; 

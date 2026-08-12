@@ -4,6 +4,7 @@ import SearchHistory from '../models/SearchHistory.js';
 import { getAdvancedActivity, getInstagramAdmirers, getInstagramProfileDetails, getNextFollowers, getNextFollowing, getNextMedias, getRecentActivity, getSharedActivity, getStoryViewerProfile } from '../services/hikerApiService.js';
 import { getStoryViewerCache, setStoryViewerCache } from '../services/utils/storyViewerCache.js';
 import { getPostComentsWithCap, getPostLikers, getUserInfo } from '../services/utils/hikerHelperFunctions.js';
+import { emitAnalyticsEvent } from '../services/productAnalyticsService.js';
 
 // Search for recent followers/following - RANDOM DATA for motivation
 export const searchRecent = async (req, res, next) => {
@@ -28,6 +29,13 @@ export const searchRecent = async (req, res, next) => {
       ipAddress,
       userAgent: req.get('User-Agent'),
       status: 'pending'
+    });
+
+    void emitAnalyticsEvent({
+      event: 'search',
+      path: '/search',
+      userId: userId || null,
+      props: { username, type },
     });
 
     try {
@@ -442,6 +450,13 @@ export const sharedActivity = async (req, res, next) => {
     const results = await getSharedActivity(username1, username2);
     const processingTime = Date.now() - startTime;
 
+    void emitAnalyticsEvent({
+      event: 'shared_activity',
+      path: '/shared-activity',
+      userId: req.user?.id || null,
+      props: { username1, username2 },
+    });
+
     res.status(200).json({
       success: true,
       data: results
@@ -502,6 +517,13 @@ export const getAdmirers = async (req, res, next) => {
     const startTime = Date.now();
     const results = await getInstagramAdmirers(username);
     const processingTime = Date.now() - startTime;
+
+    void emitAnalyticsEvent({
+      event: 'admirers',
+      path: '/admirers',
+      userId: req.user?.id || null,
+      props: { username },
+    });
 
     res.status(200).json({
       success: true,
@@ -596,6 +618,13 @@ export const getStoryViewer = async (req, res, next) => {
       setStoryViewerCache(normalized, results);
     }
 
+    void emitAnalyticsEvent({
+      event: 'story_viewer',
+      path: '/story-viewer',
+      userId: req.user?.id || null,
+      props: { username: normalized },
+    });
+
     res.status(200).json({
       success: true,
       data: results,
@@ -619,19 +648,18 @@ export const getInstagramProfile = async (req, res, next) => {
 
     const { username } = req.body;
 
-    // User should be available from middleware
-    // if (!req.user) {
-    //   return res.status(401).json({
-    //     success: false,
-    //     error: 'Authentication required for View Profile Page Feature'
-    //   });
-    // }
-
-    // Perform advanced search with real data comparison
+    // requireActiveSubscription already guaranteed paid access
     const startTime = Date.now();
-    const forPremium = Boolean(req.user?.subscription);
+    const forPremium = true;
     const results = await getInstagramProfileDetails(username, { forPremium });
     const processingTime = Date.now() - startTime;
+
+    void emitAnalyticsEvent({
+      event: 'view_profile',
+      path: '/view-profile',
+      userId: req.user?.id || null,
+      props: { username },
+    });
 
     res.status(200).json({
       success: true,
