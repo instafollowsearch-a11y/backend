@@ -1,22 +1,21 @@
 import jwt from 'jsonwebtoken';
+import { verifyAdminCredentials } from '../services/adminAccountService.js';
 
 export const adminAuth = async (req, res, next) => {
   try {
     const { admin_login, admin_password } = req.body;
-    
-    // Check login and password from environment variables
-    if (admin_login !== process.env.ADMIN_LOGIN || admin_password !== process.env.ADMIN_PASSWORD) {
+    const result = await verifyAdminCredentials(admin_login, admin_password);
+    if (!result.ok) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid admin credentials'
+        message: result.message || 'Invalid admin credentials',
       });
     }
 
-    // Create JWT token for admin
     const token = jwt.sign(
-      { 
+      {
         role: 'admin',
-        login: admin_login 
+        login: result.login,
       },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
@@ -28,7 +27,7 @@ export const adminAuth = async (req, res, next) => {
     console.error('Admin authentication error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error during authentication'
+      message: 'Server error during authentication',
     });
   }
 };

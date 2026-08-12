@@ -224,6 +224,20 @@ const migrations = [
         CREATE INDEX IF NOT EXISTS analytics_events_path_idx ON analytics_events (path);
       `);
     }
+  },
+  {
+    name: '012_create_admin_accounts',
+    up: async () => {
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS admin_accounts (
+          id SERIAL PRIMARY KEY,
+          login VARCHAR(255) NOT NULL UNIQUE,
+          password_hash VARCHAR(255) NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+    }
   }
 ];
 

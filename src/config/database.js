@@ -46,6 +46,9 @@ const connectDB = async () => {
     const { runMigrations } = await import('./migrations.js');
     await runMigrations();
 
+    const { ensureAdminBootstrap } = await import('../services/adminAccountService.js');
+    await ensureAdminBootstrap();
+
   } catch (error) {
     console.error('❌ Database connection failed:', error.message);
     console.error('Full error:', error);

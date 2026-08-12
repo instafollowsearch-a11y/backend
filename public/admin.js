@@ -683,6 +683,46 @@ function closeUserDrawer() {
 function closeModal() {
   $('editModal').style.display = 'none';
   $('subscriptionModal').style.display = 'none';
+  $('passwordModal').style.display = 'none';
+}
+
+function openPasswordModal() {
+  $('currentAdminPassword').value = '';
+  $('newAdminPassword').value = '';
+  $('confirmAdminPassword').value = '';
+  $('passwordModal').style.display = 'block';
+}
+
+async function saveAdminPassword() {
+  try {
+    const currentPassword = $('currentAdminPassword').value;
+    const newPassword = $('newAdminPassword').value;
+    const confirmPassword = $('confirmAdminPassword').value;
+    if (!currentPassword || !newPassword) {
+      showAlert('Enter current and new password', 'error');
+      return;
+    }
+    if (newPassword.length < 8) {
+      showAlert('New password must be at least 8 characters', 'error');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      showAlert('New password and confirmation do not match', 'error');
+      return;
+    }
+    const data = await api('/api/admin/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword, confirmPassword }),
+    });
+    if (!data.success) {
+      showAlert(data.message || 'Password update failed', 'error');
+      return;
+    }
+    showAlert(data.message || 'Password updated');
+    closeModal();
+  } catch (err) {
+    showAlert(err.message || 'Password update failed', 'error');
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -691,6 +731,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') login();
   });
   $('logoutBtn').addEventListener('click', () => logout());
+  $('changePasswordBtn').addEventListener('click', openPasswordModal);
+  $('savePasswordBtn').addEventListener('click', saveAdminPassword);
   $('refreshAllBtn').addEventListener('click', () => {
     const active = document.querySelector('.tab.tab-active')?.dataset.tab || 'overview';
     switchTab(active);
@@ -738,7 +780,13 @@ document.addEventListener('DOMContentLoaded', () => {
   $('drawerEditBtn').addEventListener('click', () => editUser(currentUserId));
 
   window.addEventListener('click', (event) => {
-    if (event.target === $('editModal') || event.target === $('subscriptionModal')) closeModal();
+    if (
+      event.target === $('editModal') ||
+      event.target === $('subscriptionModal') ||
+      event.target === $('passwordModal')
+    ) {
+      closeModal();
+    }
   });
 
   if (currentToken) showConsole();

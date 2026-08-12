@@ -5,6 +5,7 @@ import InstagramCache from './InstagramCache.js';
 import Subscription from './Subscription.js';
 import AdminAuditLog from './AdminAuditLog.js';
 import AnalyticsEvent from './AnalyticsEvent.js';
+import AdminAccount from './AdminAccount.js';
 
 // Определяем связи между моделями
 User.hasMany(SearchHistory, { foreignKey: 'userId', as: 'searchHistories' });
@@ -21,6 +22,7 @@ export {
   Subscription,
   AdminAuditLog,
   AnalyticsEvent,
+  AdminAccount,
 };
 
 // Синхронизация моделей
@@ -42,5 +44,6 @@ export default {
   Subscription,
   AdminAuditLog,
   AnalyticsEvent,
+  AdminAccount,
   syncModels,
 };

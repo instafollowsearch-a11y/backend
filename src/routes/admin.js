@@ -10,6 +10,7 @@ import {
   getAllSubscriptions,
   getSearchHistoryAdmin,
   getAuditLogs,
+  changePassword,
 } from '../controllers/adminController.js';
 import {
   getActivitySummary,
@@ -30,6 +31,9 @@ router.post('/login', adminAuth, (req, res) => {
 
 // Protected routes (require admin token)
 router.use(verifyAdminToken);
+
+// Admin account
+router.post('/change-password', changePassword);
 
 // User management
 router.get('/users', getAllUsers);

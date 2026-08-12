@@ -15,6 +15,7 @@ import { getSearchesLimitForPlan } from '../services/stripePriceConfig.js';
 import { writeAdminAudit } from '../services/adminAuditService.js';
 import { getSubscription } from '../services/stripeService.js';
 import { getActiveDbSubscriptionRow } from '../services/entitlementService.js';
+import { changeAdminPassword } from '../services/adminAccountService.js';
 
 // Get all users with pagination
 export const getAllUsers = async (req, res) => {
@@ -648,6 +649,50 @@ export const getAllSubscriptions = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while getting subscriptions'
+    });
+  }
+};
+
+/**
+ * POST /api/admin/change-password
+ * Persist new admin password in DB (survives Render restarts).
+ */
+export const changePassword = async (req, res) => {
+  try {
+    const login = req.admin?.login;
+    const { currentPassword, newPassword, confirmPassword } = req.body || {};
+    if (confirmPassword != null && confirmPassword !== newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password and confirmation do not match',
+      });
+    }
+    const result = await changeAdminPassword({
+      login,
+      currentPassword,
+      newPassword,
+    });
+    if (!result.ok) {
+      return res.status(400).json({
+        success: false,
+        message: result.message,
+      });
+    }
+    await writeAdminAudit({
+      actorLogin: login,
+      action: 'admin_password_change',
+      targetUserId: null,
+      payload: { login },
+    });
+    return res.json({
+      success: true,
+      message: 'Password updated. Use the new password next time you sign in.',
+    });
+  } catch (error) {
+    console.error('Error changing admin password:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while changing password',
     });
   }
 }; 
