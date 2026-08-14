@@ -123,7 +123,7 @@
                         <input id="userSearch" type="search" placeholder="Search username, email, name…"
                             class="flex-1 px-3 py-2 border border-slate-300 rounded-xl">
                         <select id="roleFilter" class="px-3 py-2 border border-slate-300 rounded-xl">
-                            <option value="">All ACL roles</option>
+                            <option value="" selected>All ACL roles</option>
                             <option value="user">User</option>
                             <option value="admin">Admin</option>
                         </select>
@@ -186,17 +186,35 @@
 
             <!-- Activity -->
             <section id="activityTab" class="tab-content" style="display:none;">
-                <div class="flex flex-wrap gap-3 items-center justify-between mb-4">
+                <div class="flex flex-wrap gap-3 items-end justify-between mb-4">
                     <div>
                         <h2 class="font-semibold text-lg">Product activity</h2>
                         <p class="text-sm text-slate-500">First-party events, funnels, and live feed</p>
                     </div>
-                    <select id="activityDays" class="px-3 py-2 border border-slate-300 rounded-xl bg-white">
-                        <option value="7">Last 7 days</option>
-                        <option value="14">Last 14 days</option>
-                        <option value="30">Last 30 days</option>
-                    </select>
+                    <div class="flex flex-wrap gap-2 items-end">
+                        <div>
+                            <label for="activityDays" class="block text-[11px] uppercase tracking-wide text-slate-500 mb-1">Preset</label>
+                            <select id="activityDays" class="px-3 py-2 border border-slate-300 rounded-xl bg-white">
+                                <option value="7">Last 7 days</option>
+                                <option value="14">Last 14 days</option>
+                                <option value="30">Last 30 days</option>
+                                <option value="custom">Custom range</option>
+                            </select>
+                        </div>
+                        <div id="activityCustomRange" class="flex flex-wrap gap-2 items-end" style="display:none;">
+                            <div>
+                                <label for="activityFrom" class="block text-[11px] uppercase tracking-wide text-slate-500 mb-1">From</label>
+                                <input id="activityFrom" type="date" class="px-3 py-2 border border-slate-300 rounded-xl bg-white">
+                            </div>
+                            <div>
+                                <label for="activityTo" class="block text-[11px] uppercase tracking-wide text-slate-500 mb-1">To</label>
+                                <input id="activityTo" type="date" class="px-3 py-2 border border-slate-300 rounded-xl bg-white">
+                            </div>
+                            <button type="button" id="activityRangeApply" class="px-4 py-2 bg-blue-600 text-white rounded-xl">Apply</button>
+                        </div>
+                    </div>
                 </div>
+                <p id="activityRangeHint" class="text-xs text-slate-500 mb-3"></p>
                 <div id="activityKpis" class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3 mb-4"></div>
                 <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4">
                     <div class="bg-white border border-slate-200 rounded-2xl p-5 xl:col-span-2">
@@ -241,9 +259,11 @@
             <section id="searchesTab" class="tab-content" style="display:none;">
                 <div class="bg-white border border-slate-200 rounded-2xl p-5">
                     <div class="flex flex-col sm:flex-row gap-3 mb-4">
-                        <input id="searchHistoryQuery" type="search" placeholder="Filter by Instagram username…"
+                        <input id="searchHistoryQuery" type="search" name="search_history_q" autocomplete="off"
+                            placeholder="Filter by Instagram username…"
                             class="flex-1 px-3 py-2 border border-slate-300 rounded-xl">
                         <button type="button" id="searchHistoryBtn" class="px-4 py-2 bg-blue-600 text-white rounded-xl">Filter</button>
+                        <button type="button" id="searchHistoryClear" class="px-4 py-2 border border-slate-300 rounded-xl text-slate-700">Clear</button>
                     </div>
                     <div class="overflow-x-auto">
                         <table class="min-w-full text-sm">

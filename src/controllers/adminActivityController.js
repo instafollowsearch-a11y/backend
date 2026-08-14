@@ -5,6 +5,7 @@ import User from '../models/User.js';
 import Subscription from '../models/Subscription.js';
 import AdminAuditLog from '../models/AdminAuditLog.js';
 import { countActiveSubscriptions } from '../services/localSubscriptionService.js';
+import { resolveEventSiteMeta } from '../services/productAnalyticsService.js';
 
 const daysAgo = (n) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
 
@@ -12,6 +13,99 @@ const parseDays = (raw, fallback = 7) => {
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 1) return fallback;
   return Math.min(Math.floor(n), 90);
+};
+
+const startOfDay = (raw) => {
+  const m = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const d = m
+    ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0, 0)
+    : new Date(raw);
+  if (Number.isNaN(d.getTime())) return null;
+  if (!m) d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+const endOfDay = (raw) => {
+  const m = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const d = m
+    ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 23, 59, 59, 999)
+    : new Date(raw);
+  if (Number.isNaN(d.getTime())) return null;
+  if (!m) d.setHours(23, 59, 59, 999);
+  return d;
+};
+
+/**
+ * Resolve activity window from ?days= or ?from=&to= (YYYY-MM-DD).
+ * Single day: set from=to (or only one of them).
+ */
+const parseActivityRange = (query = {}) => {
+  const fromRaw = String(query.from || query.start || '').trim();
+  const toRaw = String(query.to || query.end || '').trim();
+  if (fromRaw || toRaw) {
+    const from = startOfDay(fromRaw || toRaw);
+    const to = endOfDay(toRaw || fromRaw);
+    if (!from || !to) {
+      return { error: 'Invalid from/to date. Use YYYY-MM-DD.' };
+    }
+    if (from > to) {
+      return { error: 'from must be on or before to.' };
+    }
+    const maxMs = 366 * 24 * 60 * 60 * 1000;
+    if (to.getTime() - from.getTime() > maxMs) {
+      return { error: 'Date range cannot exceed 366 days.' };
+    }
+    const rangeDays = Math.max(
+      1,
+      Math.ceil((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000))
+    );
+    const fromIso = from.toISOString().slice(0, 10);
+    const toIso = to.toISOString().slice(0, 10);
+    return {
+      mode: 'custom',
+      from,
+      to,
+      rangeDays,
+      rangeLabel: fromIso === toIso ? fromIso : `${fromIso} → ${toIso}`,
+      tsWhere: { [Op.gte]: from, [Op.lte]: to },
+    };
+  }
+  const days = parseDays(query.days, 7);
+  const from = daysAgo(days);
+  const to = new Date();
+  return {
+    mode: 'preset',
+    from,
+    to,
+    rangeDays: days,
+    rangeLabel: `Last ${days} days`,
+    tsWhere: { [Op.gte]: from },
+  };
+};
+
+/**
+ * Attach site label + full URL for admin UI (works for older rows too).
+ */
+const decorateEvent = (row) => {
+  const plain = typeof row.toJSON === 'function' ? row.toJSON() : { ...row };
+  const props = plain.props && typeof plain.props === 'object' ? plain.props : {};
+  const meta = resolveEventSiteMeta({
+    event: plain.event,
+    path: plain.path,
+    props,
+  });
+  return {
+    ...plain,
+    site: meta.site,
+    siteKey: meta.siteKey,
+    url: meta.url,
+    props: {
+      ...props,
+      siteLabel: props.siteLabel || meta.site,
+      siteUrl: props.siteUrl || meta.url,
+      site: props.site || meta.siteKey,
+    },
+  };
 };
 
 /**
@@ -28,18 +122,21 @@ const countUniqueActors = async (since) => {
   return Number(rows?.[0]?.cnt || 0);
 };
 
-const countEvent = async (event, since) =>
+const countEvent = async (event, tsWhere) =>
   AnalyticsEvent.count({
-    where: { event, ts: { [Op.gte]: since } },
+    where: { event, ts: tsWhere },
   });
 
 /**
- * GET /api/admin/activity/summary?days=7
+ * GET /api/admin/activity/summary?days=7 | ?from=YYYY-MM-DD&to=YYYY-MM-DD
  */
 export const getActivitySummary = async (req, res) => {
   try {
-    const days = parseDays(req.query.days, 7);
-    const since = daysAgo(days);
+    const range = parseActivityRange(req.query);
+    if (range.error) {
+      return res.status(400).json({ success: false, message: range.error });
+    }
+    const { tsWhere, rangeDays, rangeLabel, from, to, mode } = range;
     const since1 = daysAgo(1);
     const since30 = daysAgo(30);
 
@@ -60,14 +157,14 @@ export const getActivitySummary = async (req, res) => {
       countUniqueActors(since1),
       countUniqueActors(daysAgo(7)),
       countUniqueActors(since30),
-      AnalyticsEvent.count({ where: { ts: { [Op.gte]: since } } }),
+      AnalyticsEvent.count({ where: { ts: tsWhere } }),
       countActiveSubscriptions(),
       SearchHistory.count({ where: { created_at: { [Op.gte]: since1 } } }),
       SearchHistory.count({ where: { created_at: { [Op.gte]: daysAgo(7) } } }),
       User.count({ where: { created_at: { [Op.gte]: since1 } } }),
       User.count({ where: { created_at: { [Op.gte]: daysAgo(7) } } }),
-      countEvent('checkout_started', since),
-      countEvent('upgrade_cta', since),
+      countEvent('checkout_started', tsWhere),
+      countEvent('upgrade_cta', tsWhere),
       AdminAuditLog.count({
         where: {
           action: { [Op.in]: ['grant_access', 'extend_access'] },
@@ -89,7 +186,7 @@ export const getActivitySummary = async (req, res) => {
     ];
     const featureUsage = [];
     for (const event of featureEvents) {
-      const count = await countEvent(event, since);
+      const count = await countEvent(event, tsWhere);
       if (count > 0 || ['search', 'checkout_started', 'page_view'].includes(event)) {
         featureUsage.push({ event, count });
       }
@@ -98,7 +195,7 @@ export const getActivitySummary = async (req, res) => {
 
     const topEventsRaw = await AnalyticsEvent.findAll({
       attributes: ['event', [fn('COUNT', col('id')), 'count']],
-      where: { ts: { [Op.gte]: since } },
+      where: { ts: tsWhere },
       group: ['event'],
       order: [[literal('count'), 'DESC']],
       limit: 20,
@@ -108,7 +205,7 @@ export const getActivitySummary = async (req, res) => {
     const topPagesRaw = await AnalyticsEvent.findAll({
       attributes: ['path', [fn('COUNT', col('id')), 'count']],
       where: {
-        ts: { [Op.gte]: since },
+        ts: tsWhere,
         event: 'page_view',
         path: { [Op.ne]: null },
       },
@@ -129,7 +226,7 @@ export const getActivitySummary = async (req, res) => {
     ];
     const funnel = [];
     for (const step of funnelSteps) {
-      funnel.push({ step, count: await countEvent(step, since) });
+      funnel.push({ step, count: await countEvent(step, tsWhere) });
     }
 
     const dailySeriesRaw = await AnalyticsEvent.findAll({
@@ -137,7 +234,7 @@ export const getActivitySummary = async (req, res) => {
         [fn('DATE', col('ts')), 'day'],
         [fn('COUNT', col('id')), 'count'],
       ],
-      where: { ts: { [Op.gte]: since } },
+      where: { ts: tsWhere },
       group: [fn('DATE', col('ts'))],
       order: [[fn('DATE', col('ts')), 'ASC']],
       raw: true,
@@ -148,7 +245,7 @@ export const getActivitySummary = async (req, res) => {
         [fn('DATE', col('created_at')), 'day'],
         [fn('COUNT', col('id')), 'count'],
       ],
-      where: { created_at: { [Op.gte]: since } },
+      where: { created_at: tsWhere },
       group: [fn('DATE', col('created_at'))],
       order: [[fn('DATE', col('created_at')), 'ASC']],
       raw: true,
@@ -165,6 +262,7 @@ export const getActivitySummary = async (req, res) => {
     });
 
     const recentEvents = await AnalyticsEvent.findAll({
+      where: { ts: tsWhere },
       order: [['ts', 'DESC']],
       limit: 40,
     });
@@ -179,7 +277,7 @@ export const getActivitySummary = async (req, res) => {
         'targetUsername',
         [fn('COUNT', col('id')), 'count'],
       ],
-      where: { created_at: { [Op.gte]: since } },
+      where: { created_at: tsWhere },
       group: ['targetUsername'],
       order: [[literal('count'), 'DESC']],
       limit: 15,
@@ -189,7 +287,11 @@ export const getActivitySummary = async (req, res) => {
     return res.json({
       success: true,
       data: {
-        rangeDays: days,
+        rangeMode: mode,
+        rangeDays,
+        rangeLabel,
+        rangeFrom: from.toISOString(),
+        rangeTo: to.toISOString(),
         dau,
         wau,
         mau,
@@ -208,10 +310,15 @@ export const getActivitySummary = async (req, res) => {
           event: r.event,
           count: Number(r.count),
         })),
-        topPages: topPagesRaw.map((r) => ({
-          path: r.path,
-          count: Number(r.count),
-        })),
+        topPages: topPagesRaw.map((r) => {
+          const meta = resolveEventSiteMeta({ path: r.path, event: 'page_view' });
+          return {
+            path: r.path,
+            site: meta.site,
+            url: meta.url,
+            count: Number(r.count),
+          };
+        }),
         funnel,
         dailySeries: dailySeriesRaw.map((r) => ({
           day: r.day,
@@ -229,7 +336,7 @@ export const getActivitySummary = async (req, res) => {
           username: r.targetUsername,
           count: Number(r.count),
         })),
-        recentEvents,
+        recentEvents: recentEvents.map(decorateEvent),
         recentAudits,
       },
     });
@@ -243,14 +350,17 @@ export const getActivitySummary = async (req, res) => {
 };
 
 /**
- * GET /api/admin/activity/events?limit=&event=&days=
+ * GET /api/admin/activity/events?limit=&event=&days= | &from=&to=
  */
 export const getRecentEvents = async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 50, 200);
-    const days = parseDays(req.query.days, 7);
+    const range = parseActivityRange(req.query);
+    if (range.error) {
+      return res.status(400).json({ success: false, message: range.error });
+    }
     const event = req.query.event || '';
-    const where = { ts: { [Op.gte]: daysAgo(days) } };
+    const where = { ts: range.tsWhere };
     if (event) where.event = event;
 
     const events = await AnalyticsEvent.findAll({
@@ -258,7 +368,15 @@ export const getRecentEvents = async (req, res) => {
       order: [['ts', 'DESC']],
       limit,
     });
-    return res.json({ success: true, data: { events } });
+    return res.json({
+      success: true,
+      data: {
+        events: events.map(decorateEvent),
+        rangeLabel: range.rangeLabel,
+        rangeFrom: range.from.toISOString(),
+        rangeTo: range.to.toISOString(),
+      },
+    });
   } catch (error) {
     console.error('getRecentEvents error:', error);
     return res.status(500).json({
@@ -280,7 +398,10 @@ export const getUserActivityTimeline = async (req, res) => {
       order: [['ts', 'DESC']],
       limit,
     });
-    return res.json({ success: true, data: { events } });
+    return res.json({
+      success: true,
+      data: { events: events.map(decorateEvent) },
+    });
   } catch (error) {
     console.error('getUserActivityTimeline error:', error);
     return res.status(500).json({

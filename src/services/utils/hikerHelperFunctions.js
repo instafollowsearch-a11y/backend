@@ -372,21 +372,74 @@ export const getNextFollowingData = async ({ userId, nextPageId }) => {
   }
 };
 
+const pickStoryPosterUrl = (item) => {
+  const candidates = item?.image_versions2?.candidates;
+  if (!Array.isArray(candidates) || !candidates.length) return null;
+  // Prefer a small-ish candidate for fast thumbnails / video posters.
+  const sorted = [...candidates].sort(
+    (a, b) => (a.width || 9999) - (b.width || 9999)
+  );
+  const mid = sorted.find((c) => (c.width || 0) >= 240) || sorted[sorted.length - 1];
+  return mid?.url || sorted[0]?.url || null;
+};
+
+/**
+ * Prefer a mid-quality MP4 so stories start faster than the highest bitrate.
+ */
+const pickStoryVideoUrl = (versions) => {
+  if (!Array.isArray(versions) || !versions.length) return { mediaUrl: null, fallbackUrls: [] };
+  const withUrl = versions.filter((v) => v?.url);
+  if (!withUrl.length) return { mediaUrl: null, fallbackUrls: [] };
+
+  const scored = [...withUrl].sort((a, b) => {
+    const aw = a.width || 0;
+    const bw = b.width || 0;
+    return aw - bw;
+  });
+
+  // Target ~540–720p when available; otherwise closest under 720, else smallest.
+  const preferred =
+    scored.find((v) => (v.width || 0) >= 540 && (v.width || 0) <= 720) ||
+    [...scored].reverse().find((v) => (v.width || 0) <= 720) ||
+    scored[0];
+
+  const fallbackUrls = scored
+    .map((v) => v.url)
+    .filter((url) => url && url !== preferred.url)
+    .slice(0, 2);
+
+  return { mediaUrl: preferred.url, fallbackUrls };
+};
+
 const mapStoryItem = (item) => {
   let mediaUrl = null;
+  let fallbackUrls = [];
   const isVideo =
     item.media_type === 2 ||
     (item.video_versions && item.video_versions.length > 0);
 
-  if (item.video_versions?.length > 0) {
-    mediaUrl = item.video_versions[0].url;
+  if (isVideo && item.video_versions?.length > 0) {
+    const picked = pickStoryVideoUrl(item.video_versions);
+    mediaUrl = picked.mediaUrl;
+    fallbackUrls = picked.fallbackUrls;
   } else if (item.image_versions2?.candidates?.length > 0) {
-    mediaUrl = item.image_versions2.candidates[0].url;
+    // Prefer mid-size image over largest for faster load.
+    const candidates = [...item.image_versions2.candidates].sort(
+      (a, b) => (a.width || 0) - (b.width || 0)
+    );
+    const preferred =
+      candidates.find((c) => (c.width || 0) >= 720) ||
+      candidates[candidates.length - 1];
+    mediaUrl = preferred?.url || null;
   }
+
+  const posterUrl = pickStoryPosterUrl(item);
 
   return {
     id: item.pk || item.id,
     mediaUrl,
+    posterUrl,
+    fallbackUrls,
     mediaType: isVideo ? 'video' : 'image',
     takenAt: item.taken_at,
     expiringAt: item.expiring_at,

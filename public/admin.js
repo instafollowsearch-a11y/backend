@@ -84,16 +84,33 @@ function barRows(items, labelKey, countKey = 'count') {
       const label = item[labelKey] || '—';
       const count = Number(item[countKey] || 0);
       const pct = Math.round((count / max) * 100);
+      const site = item.site
+        ? `<div class="text-[11px] text-slate-500">${escapeHtml(item.site)}</div>`
+        : '';
+      const url = item.url
+        ? `<div class="text-[11px] text-indigo-600 truncate" title="${escapeHtml(item.url)}">${escapeHtml(item.url)}</div>`
+        : '';
       return `
         <div>
           <div class="flex justify-between gap-2 mb-1">
-            <span class="truncate">${escapeHtml(label)}</span>
+            <div class="min-w-0">
+              <span class="truncate block">${escapeHtml(label)}</span>
+              ${site}${url}
+            </div>
             <span class="text-slate-500 shrink-0">${count}</span>
           </div>
           <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
         </div>`;
     })
     .join('');
+}
+
+function eventSite(e) {
+  return e.site || e.props?.siteLabel || '—';
+}
+
+function eventUrl(e) {
+  return e.url || e.props?.siteUrl || '';
 }
 
 function sparkline(series) {
@@ -230,16 +247,18 @@ async function loadOverview() {
     $('overviewFeatures').innerHTML = barRows(a.featureUsage || [], 'event');
     $('overviewEvents').innerHTML = (a.recentEvents || [])
       .slice(0, 20)
-      .map(
-        (e) => `
+      .map((e) => {
+        const url = eventUrl(e);
+        return `
         <div class="flex justify-between gap-3 border-b border-slate-100 py-2">
           <div class="min-w-0">
             <div class="font-medium truncate">${escapeHtml(e.event)}</div>
-            <div class="text-xs text-slate-500 truncate">${escapeHtml(e.path || '')}</div>
+            <div class="text-xs text-slate-500 truncate">${escapeHtml(eventSite(e))}</div>
+            <div class="text-xs text-indigo-600 truncate" title="${escapeHtml(url || e.path || '')}">${escapeHtml(url || e.path || '—')}</div>
           </div>
           <div class="text-xs text-slate-400 shrink-0">${fmtDate(e.ts)}</div>
-        </div>`
-      )
+        </div>`;
+      })
       .join('') || '<p class="text-slate-400">No events yet — browse the app to populate.</p>';
 
     $('overviewAudits').innerHTML = (a.recentAudits || [])
@@ -453,14 +472,46 @@ async function saveSubscription() {
   }
 }
 
+function syncActivityRangeUi() {
+  const mode = $('activityDays')?.value || '7';
+  const custom = $('activityCustomRange');
+  if (!custom) return;
+  custom.style.display = mode === 'custom' ? 'flex' : 'none';
+  if (mode === 'custom') {
+    const today = new Date().toISOString().slice(0, 10);
+    if ($('activityTo') && !$('activityTo').value) $('activityTo').value = today;
+    if ($('activityFrom') && !$('activityFrom').value) {
+      const d = new Date();
+      d.setDate(d.getDate() - 6);
+      $('activityFrom').value = d.toISOString().slice(0, 10);
+    }
+  }
+}
+
+function getActivityRangeQuery() {
+  const mode = $('activityDays')?.value || '7';
+  if (mode === 'custom') {
+    const from = $('activityFrom')?.value || '';
+    const to = $('activityTo')?.value || '';
+    if (!from && !to) return 'days=7';
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    else if (from) params.set('to', from);
+    return params.toString();
+  }
+  return `days=${encodeURIComponent(mode)}`;
+}
+
 // Activity
 async function loadActivityDashboard() {
   try {
-    const days = $('activityDays')?.value || '7';
+    syncActivityRangeUi();
+    const rangeQs = getActivityRangeQuery();
     const event = $('eventFilter')?.value || '';
     const [summary, events] = await Promise.all([
-      api(`/api/admin/activity/summary?days=${days}`),
-      api(`/api/admin/activity/events?days=${days}&limit=80${event ? `&event=${encodeURIComponent(event)}` : ''}`),
+      api(`/api/admin/activity/summary?${rangeQs}`),
+      api(`/api/admin/activity/events?${rangeQs}&limit=80${event ? `&event=${encodeURIComponent(event)}` : ''}`),
     ]);
     if (!summary.success) {
       $('activityKpis').innerHTML = `<p class="text-rose-600 col-span-full">${escapeHtml(summary.message || 'Failed')}</p>`;
@@ -468,15 +519,20 @@ async function loadActivityDashboard() {
     }
     const s = summary.data;
     activityCache = s;
+    if ($('activityRangeHint')) {
+      $('activityRangeHint').textContent = s.rangeLabel
+        ? `Showing: ${s.rangeLabel} · Events / funnel / stream use this window. DAU/WAU/MAU stay fixed (1d / 7d / 30d).`
+        : '';
+    }
     $('activityKpis').innerHTML = [
-      kpiCard('DAU', s.dau),
-      kpiCard('WAU', s.wau),
-      kpiCard('MAU', s.mau),
-      kpiCard('Events', s.eventsInRange),
+      kpiCard('DAU', s.dau, 'last 1 day'),
+      kpiCard('WAU', s.wau, 'last 7 days'),
+      kpiCard('MAU', s.mau, 'last 30 days'),
+      kpiCard('Events', s.eventsInRange, s.rangeLabel || ''),
       kpiCard('Paid', s.activePaid),
       kpiCard('Searches 7d', s.searches7d),
-      kpiCard('Upgrades CTA', s.upgradeCtas),
-      kpiCard('Checkouts', s.checkoutStarted),
+      kpiCard('Upgrades CTA', s.upgradeCtas, s.rangeLabel || ''),
+      kpiCard('Checkouts', s.checkoutStarted, s.rangeLabel || ''),
     ].join('');
     $('activityFunnel').innerHTML = barRows(s.funnel || [], 'step');
     $('activityTopEvents').innerHTML = barRows(s.topEvents || [], 'event');
@@ -490,7 +546,8 @@ async function loadActivityDashboard() {
           <tr>
             <th class="px-3 py-2 text-left">When</th>
             <th class="px-3 py-2 text-left">Event</th>
-            <th class="px-3 py-2 text-left">Path</th>
+            <th class="px-3 py-2 text-left">Site</th>
+            <th class="px-3 py-2 text-left">URL</th>
             <th class="px-3 py-2 text-left">User / anon</th>
             <th class="px-3 py-2 text-left">Props</th>
           </tr>
@@ -498,18 +555,30 @@ async function loadActivityDashboard() {
         <tbody class="divide-y divide-slate-100">
           ${
             list
-              .map(
-                (e) => `
+              .map((e) => {
+                const url = eventUrl(e);
+                const props = { ...(e.props || {}) };
+                delete props.siteLabel;
+                delete props.siteUrl;
+                delete props.site;
+                return `
             <tr class="hover:bg-slate-50">
               <td class="px-3 py-2 whitespace-nowrap text-slate-500">${fmtDate(e.ts)}</td>
               <td class="px-3 py-2">${badge(e.event, 'blue')}</td>
-              <td class="px-3 py-2 truncate max-w-[180px]">${escapeHtml(e.path || '—')}</td>
+              <td class="px-3 py-2 text-xs">${escapeHtml(eventSite(e))}</td>
+              <td class="px-3 py-2 text-xs max-w-[260px]">
+                ${
+                  url
+                    ? `<a class="text-indigo-600 hover:underline break-all" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`
+                    : escapeHtml(e.path || '—')
+                }
+              </td>
               <td class="px-3 py-2 font-mono text-xs">${escapeHtml(e.userId || e.user_id || e.anonId || e.anon_id || '—')}</td>
-              <td class="px-3 py-2 text-xs text-slate-500 truncate max-w-[220px]">${escapeHtml(JSON.stringify(e.props || {}))}</td>
-            </tr>`
-              )
+              <td class="px-3 py-2 text-xs text-slate-500 truncate max-w-[200px]">${escapeHtml(JSON.stringify(props))}</td>
+            </tr>`;
+              })
               .join('') ||
-            '<tr><td colspan="5" class="px-3 py-6 text-slate-400">No events</td></tr>'
+            '<tr><td colspan="6" class="px-3 py-6 text-slate-400">No events</td></tr>'
           }
         </tbody>
       </table>`;
@@ -658,7 +727,14 @@ async function openUserDrawer(userId) {
         <p class="section-title mb-2">Activity timeline</p>
         <ul class="space-y-1 text-xs max-h-48 overflow-y-auto">
           ${activityTimeline
-            .map((e) => `<li><strong>${escapeHtml(e.event)}</strong> ${escapeHtml(e.path || '')} · ${fmtDate(e.ts)}</li>`)
+            .map((e) => {
+              const url = eventUrl(e);
+              return `<li><strong>${escapeHtml(e.event)}</strong> · ${escapeHtml(eventSite(e))} · ${
+                url
+                  ? `<a class="text-indigo-600 hover:underline break-all" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`
+                  : escapeHtml(e.path || '')
+              } · ${fmtDate(e.ts)}</li>`;
+            })
             .join('') || '<li class="text-slate-400">No tracked events for this user yet</li>'}
         </ul>
       </div>
@@ -753,9 +829,24 @@ document.addEventListener('DOMContentLoaded', () => {
   $('roleFilter')?.addEventListener('change', () => loadUsers(1));
   $('statusFilter')?.addEventListener('change', () => loadSubscriptions(1));
   $('overviewDays')?.addEventListener('change', loadOverview);
-  $('activityDays')?.addEventListener('change', loadActivityDashboard);
+  $('activityDays')?.addEventListener('change', () => {
+    syncActivityRangeUi();
+    if (($('activityDays')?.value || '') !== 'custom') loadActivityDashboard();
+  });
+  $('activityRangeApply')?.addEventListener('click', () => {
+    if ($('activityDays')) $('activityDays').value = 'custom';
+    syncActivityRangeUi();
+    loadActivityDashboard();
+  });
   $('eventFilter')?.addEventListener('change', loadActivityDashboard);
   $('searchHistoryBtn')?.addEventListener('click', () => loadSearches(1));
+  $('searchHistoryClear')?.addEventListener('click', () => {
+    if ($('searchHistoryQuery')) $('searchHistoryQuery').value = '';
+    loadSearches(1);
+  });
+  $('searchHistoryQuery')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') loadSearches(1);
+  });
   $('auditActionFilter')?.addEventListener('change', () => loadAudits(1));
 
   document.querySelectorAll('.close').forEach((btn) => btn.addEventListener('click', closeModal));

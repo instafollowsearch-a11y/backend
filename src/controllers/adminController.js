@@ -15,7 +15,30 @@ import { getSearchesLimitForPlan } from '../services/stripePriceConfig.js';
 import { writeAdminAudit } from '../services/adminAuditService.js';
 import { getSubscription } from '../services/stripeService.js';
 import { getActiveDbSubscriptionRow } from '../services/entitlementService.js';
+import { resolveEventSiteMeta } from '../services/productAnalyticsService.js';
 import { changeAdminPassword } from '../services/adminAccountService.js';
+
+const decorateAnalyticsEvent = (row) => {
+  const plain = typeof row.toJSON === 'function' ? row.toJSON() : { ...row };
+  const props = plain.props && typeof plain.props === 'object' ? plain.props : {};
+  const meta = resolveEventSiteMeta({
+    event: plain.event,
+    path: plain.path,
+    props,
+  });
+  return {
+    ...plain,
+    site: meta.site,
+    siteKey: meta.siteKey,
+    url: meta.url,
+    props: {
+      ...props,
+      siteLabel: props.siteLabel || meta.site,
+      siteUrl: props.siteUrl || meta.url,
+      site: props.site || meta.siteKey,
+    },
+  };
+};
 
 // Get all users with pagination
 export const getAllUsers = async (req, res) => {
@@ -153,7 +176,7 @@ export const getUserById = async (req, res) => {
         searchCount,
         recentSearches,
         recentAudits,
-        activityTimeline,
+        activityTimeline: activityTimeline.map(decorateAnalyticsEvent),
         allSubscriptions,
       }
     });

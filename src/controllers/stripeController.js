@@ -51,6 +51,7 @@ export const createPaymentSession = async (req, res) => {
     void emitAnalyticsEvent({
       event: 'checkout_started',
       path: '/pricing',
+      site: 'main',
       userId: user.id,
       props: { priceId, plan: resolved.plan },
     });
