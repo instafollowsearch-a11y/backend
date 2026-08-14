@@ -2,7 +2,11 @@ import { validationResult } from 'express-validator';
 import rapidApiService from '../services/rapidApiService.js';
 import SearchHistory from '../models/SearchHistory.js';
 import { getAdvancedActivity, getInstagramAdmirers, getInstagramProfileDetails, getNextFollowers, getNextFollowing, getNextMedias, getRecentActivity, getSharedActivity, getStoryViewerProfile } from '../services/hikerApiService.js';
-import { getStoryViewerCache, setStoryViewerCache } from '../services/utils/storyViewerCache.js';
+import {
+  getStoryViewerCache,
+  setStoryViewerCache,
+  getStoryViewerCacheTtlMs,
+} from '../services/utils/storyViewerCache.js';
 import { getPostComentsWithCap, getPostLikers, getUserInfo } from '../services/utils/hikerHelperFunctions.js';
 import { emitAnalyticsEvent } from '../services/productAnalyticsService.js';
 
@@ -34,6 +38,7 @@ export const searchRecent = async (req, res, next) => {
     void emitAnalyticsEvent({
       event: 'search',
       path: '/search',
+      site: 'main',
       userId: userId || null,
       props: { username, type },
     });
@@ -453,6 +458,7 @@ export const sharedActivity = async (req, res, next) => {
     void emitAnalyticsEvent({
       event: 'shared_activity',
       path: '/shared-activity',
+      site: 'main',
       userId: req.user?.id || null,
       props: { username1, username2 },
     });
@@ -521,6 +527,7 @@ export const getAdmirers = async (req, res, next) => {
     void emitAnalyticsEvent({
       event: 'admirers',
       path: '/admirers',
+      site: 'main',
       userId: req.user?.id || null,
       props: { username },
     });
@@ -613,14 +620,21 @@ export const getStoryViewer = async (req, res, next) => {
       });
     }
 
-    const storyCount = Array.isArray(results.userStories) ? results.userStories.length : 0;
-    if (storyCount > 0 || results.success) {
-      setStoryViewerCache(normalized, results);
+    const storyCount = Array.isArray(results.userStories)
+      ? results.userStories.length
+      : 0;
+    // Always cache successful profile loads, but empty stories get a short TTL
+    // so a temporary Hiker miss does not hide an active ring for ~8 minutes.
+    if (results.success) {
+      setStoryViewerCache(normalized, results, {
+        ttlMs: getStoryViewerCacheTtlMs({ hasStories: storyCount > 0 }),
+      });
     }
 
     void emitAnalyticsEvent({
       event: 'story_viewer',
       path: '/story-viewer',
+      site: 'story_viewer',
       userId: req.user?.id || null,
       props: { username: normalized },
     });
@@ -657,6 +671,7 @@ export const getInstagramProfile = async (req, res, next) => {
     void emitAnalyticsEvent({
       event: 'view_profile',
       path: '/view-profile',
+      site: 'main',
       userId: req.user?.id || null,
       props: { username },
     });
