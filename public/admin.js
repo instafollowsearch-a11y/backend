@@ -90,12 +90,15 @@ function barRows(items, labelKey, countKey = 'count') {
       const url = item.url
         ? `<div class="text-[11px] text-indigo-600 truncate" title="${escapeHtml(item.url)}">${escapeHtml(item.url)}</div>`
         : '';
+      const extra = item.pageViews != null
+        ? `<div class="text-[11px] text-slate-500">${escapeHtml(String(item.pageViews))} page views</div>`
+        : '';
       return `
         <div>
           <div class="flex justify-between gap-2 mb-1">
             <div class="min-w-0">
               <span class="truncate block">${escapeHtml(label)}</span>
-              ${site}${url}
+              ${site}${url}${extra}
             </div>
             <span class="text-slate-500 shrink-0">${count}</span>
           </div>
@@ -473,7 +476,7 @@ async function saveSubscription() {
 }
 
 function syncActivityRangeUi() {
-  const mode = $('activityDays')?.value || '7';
+  const mode = $('activityDays')?.value || '24h';
   const custom = $('activityCustomRange');
   if (!custom) return;
   custom.style.display = mode === 'custom' ? 'flex' : 'none';
@@ -489,17 +492,18 @@ function syncActivityRangeUi() {
 }
 
 function getActivityRangeQuery() {
-  const mode = $('activityDays')?.value || '7';
+  const mode = $('activityDays')?.value || '24h';
   if (mode === 'custom') {
     const from = $('activityFrom')?.value || '';
     const to = $('activityTo')?.value || '';
-    if (!from && !to) return 'days=7';
+    if (!from && !to) return 'hours=24';
     const params = new URLSearchParams();
     if (from) params.set('from', from);
     if (to) params.set('to', to);
     else if (from) params.set('to', from);
     return params.toString();
   }
+  if (mode === '24h') return 'hours=24';
   return `days=${encodeURIComponent(mode)}`;
 }
 
@@ -525,12 +529,15 @@ async function loadActivityDashboard() {
         : '';
     }
     $('activityKpis').innerHTML = [
-      kpiCard('DAU', s.dau, 'last 1 day'),
-      kpiCard('WAU', s.wau, 'last 7 days'),
-      kpiCard('MAU', s.mau, 'last 30 days'),
+      kpiCard('Visitors', s.visitorsInRange, s.rangeLabel || ''),
+      kpiCard('Page views', s.pageViewsInRange, s.rangeLabel || ''),
       kpiCard('Events', s.eventsInRange, s.rangeLabel || ''),
+      kpiCard('Searches', s.searchesInRange, s.rangeLabel || ''),
+      kpiCard('Searchers', s.uniqueSearchersInRange, 'unique people who searched'),
+      kpiCard('DAU', s.dau, 'rolling last 1 day'),
+      kpiCard('WAU', s.wau, 'rolling last 7 days'),
+      kpiCard('MAU', s.mau, 'rolling last 30 days'),
       kpiCard('Paid', s.activePaid),
-      kpiCard('Searches 7d', s.searches7d),
       kpiCard('Upgrades CTA', s.upgradeCtas, s.rangeLabel || ''),
       kpiCard('Checkouts', s.checkoutStarted, s.rangeLabel || ''),
     ].join('');
@@ -538,13 +545,35 @@ async function loadActivityDashboard() {
     $('activityTopEvents').innerHTML = barRows(s.topEvents || [], 'event');
     $('activityTopPages').innerHTML = barRows(s.topPages || [], 'path');
     $('activityTopSearches').innerHTML = barRows(s.topSearchTargets || [], 'username');
+    if ($('activityTrafficSources')) {
+      $('activityTrafficSources').innerHTML = barRows(s.trafficSources || [], 'source', 'visitors');
+    }
+    if ($('activityVisitorCountries')) {
+      $('activityVisitorCountries').innerHTML = barRows(s.visitorCountries || [], 'source', 'visitors');
+    }
+    if ($('activityVisitorCities')) {
+      $('activityVisitorCities').innerHTML = barRows(s.visitorCities || [], 'source', 'visitors');
+    }
 
     const list = events.success ? events.data.events : s.recentEvents || [];
+    const shown = list.length;
+    const filteredTotal = events.success ? Number(events.data.total ?? shown) : shown;
+    if ($('activityStreamCounts')) {
+      const chip = (label, value) =>
+        `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 text-slate-700">${escapeHtml(label)} <strong>${escapeHtml(String(value ?? 0))}</strong></span>`;
+      $('activityStreamCounts').innerHTML = [
+        chip('Searches', s.searchesInRange),
+        chip('Searchers', s.uniqueSearchersInRange),
+        chip('Page views', s.pageViewsInRange),
+        chip('Visitors', s.visitorsInRange),
+        chip('Events', s.eventsInRange),
+      ].join('');
+    }
     $('activityEventStream').innerHTML = `
       <table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-xs uppercase text-slate-500">
           <tr>
-            <th class="px-3 py-2 text-left">When</th>
+            <th class="px-3 py-2 text-left">When <span class="normal-case font-normal text-slate-400">Showing ${shown} of ${filteredTotal}</span></th>
             <th class="px-3 py-2 text-left">Event</th>
             <th class="px-3 py-2 text-left">Site</th>
             <th class="px-3 py-2 text-left">URL</th>

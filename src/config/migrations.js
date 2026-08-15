@@ -238,6 +238,20 @@ const migrations = [
         );
       `);
     }
+  },
+  {
+    name: '013_analytics_events_geo',
+    up: async () => {
+      await sequelize.query(`
+        ALTER TABLE analytics_events
+          ADD COLUMN IF NOT EXISTS country VARCHAR(64) NULL;
+        ALTER TABLE analytics_events
+          ADD COLUMN IF NOT EXISTS region VARCHAR(64) NULL;
+        ALTER TABLE analytics_events
+          ADD COLUMN IF NOT EXISTS city VARCHAR(128) NULL;
+        CREATE INDEX IF NOT EXISTS analytics_events_country_idx ON analytics_events (country);
+      `);
+    }
   }
 ];
 

@@ -6,13 +6,24 @@ import Subscription from '../models/Subscription.js';
 import AdminAuditLog from '../models/AdminAuditLog.js';
 import { countActiveSubscriptions } from '../services/localSubscriptionService.js';
 import { resolveEventSiteMeta } from '../services/productAnalyticsService.js';
+import { trafficSourceSql } from '../services/trafficSource.js';
+
+const SEARCH_EVENTS = ['search', 'story_viewer_search'];
 
 const daysAgo = (n) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
+
+const hoursAgo = (n) => new Date(Date.now() - n * 60 * 60 * 1000);
 
 const parseDays = (raw, fallback = 7) => {
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 1) return fallback;
   return Math.min(Math.floor(n), 90);
+};
+
+const parseHours = (raw) => {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return Math.min(Math.floor(n), 24 * 90);
 };
 
 const startOfDay = (raw) => {
@@ -36,8 +47,9 @@ const endOfDay = (raw) => {
 };
 
 /**
- * Resolve activity window from ?days= or ?from=&to= (YYYY-MM-DD).
+ * Resolve activity window from ?hours=, ?days=, or ?from=&to= (YYYY-MM-DD).
  * Single day: set from=to (or only one of them).
+ * Custom from/to stays calendar-day inclusive. hours/days are rolling.
  */
 const parseActivityRange = (query = {}) => {
   const fromRaw = String(query.from || query.start || '').trim();
@@ -70,6 +82,19 @@ const parseActivityRange = (query = {}) => {
       tsWhere: { [Op.gte]: from, [Op.lte]: to },
     };
   }
+  const hours = parseHours(query.hours);
+  if (hours != null) {
+    const from = hoursAgo(hours);
+    const to = new Date();
+    return {
+      mode: 'preset',
+      from,
+      to,
+      rangeDays: Math.max(1, Math.ceil(hours / 24)),
+      rangeLabel: hours === 24 ? 'Last 24 hours' : `Last ${hours} hours`,
+      tsWhere: { [Op.gte]: from },
+    };
+  }
   const days = parseDays(query.days, 7);
   const from = daysAgo(days);
   const to = new Date();
@@ -78,7 +103,7 @@ const parseActivityRange = (query = {}) => {
     from,
     to,
     rangeDays: days,
-    rangeLabel: `Last ${days} days`,
+    rangeLabel: days === 1 ? 'Last 24 hours' : `Last ${days} days`,
     tsWhere: { [Op.gte]: from },
   };
 };
@@ -109,14 +134,14 @@ const decorateEvent = (row) => {
 };
 
 /**
- * Distinct active users/anons in window.
+ * Distinct users/anons in a ts window. Pass a Sequelize ts filter (Op.gte / range).
  */
-const countUniqueActors = async (since) => {
+const countUniqueActors = async (tsWhere, extraWhere = {}) => {
   const rows = await AnalyticsEvent.findAll({
     attributes: [
       [fn('COUNT', literal("DISTINCT COALESCE(user_id::text, anon_id)")), 'cnt'],
     ],
-    where: { ts: { [Op.gte]: since } },
+    where: { ts: tsWhere, ...extraWhere },
     raw: true,
   });
   return Number(rows?.[0]?.cnt || 0);
@@ -127,8 +152,13 @@ const countEvent = async (event, tsWhere) =>
     where: { event, ts: tsWhere },
   });
 
+const countEventsIn = async (events, tsWhere) =>
+  AnalyticsEvent.count({
+    where: { event: { [Op.in]: events }, ts: tsWhere },
+  });
+
 /**
- * GET /api/admin/activity/summary?days=7 | ?from=YYYY-MM-DD&to=YYYY-MM-DD
+ * GET /api/admin/activity/summary?hours=24 | ?days=7 | ?from=YYYY-MM-DD&to=YYYY-MM-DD
  */
 export const getActivitySummary = async (req, res) => {
   try {
@@ -145,6 +175,9 @@ export const getActivitySummary = async (req, res) => {
       wau,
       mau,
       eventsInRange,
+      visitorsInRange,
+      searchesInRange,
+      uniqueSearchersInRange,
       activePaid,
       searches1d,
       searches7d,
@@ -154,10 +187,13 @@ export const getActivitySummary = async (req, res) => {
       upgradeCtas,
       grants7d,
     ] = await Promise.all([
-      countUniqueActors(since1),
-      countUniqueActors(daysAgo(7)),
-      countUniqueActors(since30),
+      countUniqueActors({ [Op.gte]: since1 }),
+      countUniqueActors({ [Op.gte]: daysAgo(7) }),
+      countUniqueActors({ [Op.gte]: since30 }),
       AnalyticsEvent.count({ where: { ts: tsWhere } }),
+      countUniqueActors(tsWhere),
+      countEventsIn(SEARCH_EVENTS, tsWhere),
+      countUniqueActors(tsWhere, { event: { [Op.in]: SEARCH_EVENTS } }),
       countActiveSubscriptions(),
       SearchHistory.count({ where: { created_at: { [Op.gte]: since1 } } }),
       SearchHistory.count({ where: { created_at: { [Op.gte]: daysAgo(7) } } }),
@@ -228,6 +264,8 @@ export const getActivitySummary = async (req, res) => {
     for (const step of funnelSteps) {
       funnel.push({ step, count: await countEvent(step, tsWhere) });
     }
+    const pageViewsInRange =
+      funnel.find((step) => step.step === 'page_view')?.count ?? 0;
 
     const dailySeriesRaw = await AnalyticsEvent.findAll({
       attributes: [
@@ -284,6 +322,59 @@ export const getActivitySummary = async (req, res) => {
       raw: true,
     });
 
+    const sourceExpr = literal(trafficSourceSql());
+    const trafficSourcesRaw = await AnalyticsEvent.findAll({
+      attributes: [
+        [sourceExpr, 'source'],
+        [fn('COUNT', col('id')), 'pageViews'],
+        [fn('COUNT', literal("DISTINCT COALESCE(user_id::text, anon_id)")), 'visitors'],
+      ],
+      where: {
+        ts: tsWhere,
+        event: 'page_view',
+      },
+      group: [sourceExpr],
+      order: [[literal('visitors'), 'DESC']],
+      limit: 20,
+      raw: true,
+    });
+
+    const visitorCountriesRaw = await AnalyticsEvent.findAll({
+      attributes: [
+        'country',
+        [fn('COUNT', col('id')), 'pageViews'],
+        [fn('COUNT', literal("DISTINCT COALESCE(user_id::text, anon_id)")), 'visitors'],
+      ],
+      where: {
+        ts: tsWhere,
+        event: 'page_view',
+        country: { [Op.ne]: null },
+      },
+      group: ['country'],
+      order: [[literal('visitors'), 'DESC']],
+      limit: 20,
+      raw: true,
+    });
+
+    const visitorCitiesRaw = await AnalyticsEvent.findAll({
+      attributes: [
+        'city',
+        'region',
+        'country',
+        [fn('COUNT', col('id')), 'pageViews'],
+        [fn('COUNT', literal("DISTINCT COALESCE(user_id::text, anon_id)")), 'visitors'],
+      ],
+      where: {
+        ts: tsWhere,
+        event: 'page_view',
+        city: { [Op.ne]: null },
+      },
+      group: ['city', 'region', 'country'],
+      order: [[literal('visitors'), 'DESC']],
+      limit: 20,
+      raw: true,
+    });
+
     return res.json({
       success: true,
       data: {
@@ -297,6 +388,10 @@ export const getActivitySummary = async (req, res) => {
         mau,
         eventsInRange,
         events7d: eventsInRange,
+        visitorsInRange,
+        pageViewsInRange,
+        searchesInRange,
+        uniqueSearchersInRange,
         activePaid,
         searches1d,
         searches7d,
@@ -336,6 +431,27 @@ export const getActivitySummary = async (req, res) => {
           username: r.targetUsername,
           count: Number(r.count),
         })),
+        trafficSources: trafficSourcesRaw.map((r) => ({
+          source: r.source || 'Direct / unknown',
+          visitors: Number(r.visitors),
+          pageViews: Number(r.pageViews),
+          count: Number(r.visitors),
+        })),
+        visitorCountries: visitorCountriesRaw.map((r) => ({
+          source: r.country,
+          visitors: Number(r.visitors),
+          pageViews: Number(r.pageViews),
+          count: Number(r.visitors),
+        })),
+        visitorCities: visitorCitiesRaw.map((r) => {
+          const label = [r.city, r.region, r.country].filter(Boolean).join(', ');
+          return {
+            source: label,
+            visitors: Number(r.visitors),
+            pageViews: Number(r.pageViews),
+            count: Number(r.visitors),
+          };
+        }),
         recentEvents: recentEvents.map(decorateEvent),
         recentAudits,
       },
@@ -350,7 +466,7 @@ export const getActivitySummary = async (req, res) => {
 };
 
 /**
- * GET /api/admin/activity/events?limit=&event=&days= | &from=&to=
+ * GET /api/admin/activity/events?limit=&event=&hours=24 | ?days= | &from=&to=
  */
 export const getRecentEvents = async (req, res) => {
   try {
@@ -363,15 +479,20 @@ export const getRecentEvents = async (req, res) => {
     const where = { ts: range.tsWhere };
     if (event) where.event = event;
 
-    const events = await AnalyticsEvent.findAll({
-      where,
-      order: [['ts', 'DESC']],
-      limit,
-    });
+    const [events, total] = await Promise.all([
+      AnalyticsEvent.findAll({
+        where,
+        order: [['ts', 'DESC']],
+        limit,
+      }),
+      AnalyticsEvent.count({ where }),
+    ]);
     return res.json({
       success: true,
       data: {
         events: events.map(decorateEvent),
+        total,
+        limit,
         rangeLabel: range.rangeLabel,
         rangeFrom: range.from.toISOString(),
         rangeTo: range.to.toISOString(),

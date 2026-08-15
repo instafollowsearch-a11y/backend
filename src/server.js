@@ -29,6 +29,8 @@ dotenv.config();
 const app = express();
 const PORT = Number.parseInt(process.env.PORT, 10) || 5055;
 
+app.set('trust proxy', 1);
+
 // Connect to database
 connectDB();
 

@@ -47,6 +47,18 @@ const AnalyticsEvent = sequelize.define(
       allowNull: true,
       field: 'utm_campaign',
     },
+    country: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
+    region: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
+    city: {
+      type: DataTypes.STRING(128),
+      allowNull: true,
+    },
     ts: {
       type: DataTypes.DATE,
       allowNull: false,
@@ -62,6 +74,7 @@ const AnalyticsEvent = sequelize.define(
       { fields: ['event'] },
       { fields: ['user_id'] },
       { fields: ['path'] },
+      { fields: ['country'] },
     ],
   }
 );

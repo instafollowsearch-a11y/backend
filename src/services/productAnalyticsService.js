@@ -1,4 +1,10 @@
 import AnalyticsEvent from '../models/AnalyticsEvent.js';
+import { lookupGeoFromIp } from './geoLookup.js';
+import {
+  referrerHostOf,
+  resolveTrafficSource,
+  sanitizeReferrer,
+} from './trafficSource.js';
 
 export const ALLOWED_EVENTS = new Set([
   'page_view',
@@ -57,6 +63,25 @@ export const resolveEventSiteMeta = ({ event, path, props = {} } = {}) => {
 };
 
 /**
+ * Merge first-party attribution onto event props.
+ */
+const withTrafficProps = (props, { utmSource, utmMedium, referrer }) => {
+  const ref = sanitizeReferrer(referrer || props.referrer || null);
+  const utmS = utmSource || props.utmSource || null;
+  const utmM = utmMedium || props.utmMedium || null;
+  return {
+    ...props,
+    referrer: ref,
+    referrerHost: referrerHostOf(ref),
+    trafficSource: resolveTrafficSource({
+      utmSource: utmS,
+      utmMedium: utmM,
+      referrer: ref,
+    }),
+  };
+};
+
+/**
  * Persist one analytics event (best-effort).
  */
 export const emitAnalyticsEvent = async ({
@@ -68,8 +93,10 @@ export const emitAnalyticsEvent = async ({
   utmSource = null,
   utmMedium = null,
   utmCampaign = null,
+  referrer = null,
   ts = null,
   site = null,
+  clientIp = null,
 }) => {
   if (!event || !ALLOWED_EVENTS.has(event)) return null;
   try {
@@ -78,12 +105,16 @@ export const emitAnalyticsEvent = async ({
       path,
       props: { ...props, site: site || props.site },
     });
-    const mergedProps = {
-      ...(props && typeof props === 'object' ? props : {}),
-      site: site || props.site || meta.siteKey,
-      siteLabel: meta.site,
-      siteUrl: meta.url,
-    };
+    const mergedProps = withTrafficProps(
+      {
+        ...(props && typeof props === 'object' ? props : {}),
+        site: site || props.site || meta.siteKey,
+        siteLabel: meta.site,
+        siteUrl: meta.url,
+      },
+      { utmSource, utmMedium, referrer }
+    );
+    const geo = lookupGeoFromIp(clientIp);
     return await AnalyticsEvent.create({
       event,
       path: path ? String(path).slice(0, 512) : null,
@@ -93,6 +124,9 @@ export const emitAnalyticsEvent = async ({
       utmSource: utmSource ? String(utmSource).slice(0, 128) : null,
       utmMedium: utmMedium ? String(utmMedium).slice(0, 128) : null,
       utmCampaign: utmCampaign ? String(utmCampaign).slice(0, 128) : null,
+      country: geo.country,
+      region: geo.region,
+      city: geo.city,
       ts: ts ? new Date(ts) : new Date(),
     });
   } catch (error) {
@@ -104,8 +138,9 @@ export const emitAnalyticsEvent = async ({
 /**
  * Batch insert validated events.
  */
-export const ingestAnalyticsEvents = async (events, { userId = null } = {}) => {
+export const ingestAnalyticsEvents = async (events, { userId = null, clientIp = null } = {}) => {
   const rows = [];
+  const geo = lookupGeoFromIp(clientIp);
   for (const raw of events || []) {
     if (!raw || !ALLOWED_EVENTS.has(raw.event)) continue;
     const baseProps =
@@ -118,20 +153,30 @@ export const ingestAnalyticsEvents = async (events, { userId = null } = {}) => {
       path: raw.path,
       props: baseProps,
     });
+    const utmSource = raw.utmSource || raw.utm_source || null;
+    const utmMedium = raw.utmMedium || raw.utm_medium || null;
+    const utmCampaign = raw.utmCampaign || raw.utm_campaign || null;
+    const referrer = raw.referrer || baseProps.referrer || null;
     rows.push({
       event: raw.event,
       path: raw.path ? String(raw.path).slice(0, 512) : null,
       userId: userId || raw.userId || null,
       anonId: raw.anonId ? String(raw.anonId).slice(0, 64) : null,
-      props: {
-        ...baseProps,
-        site: baseProps.site || meta.siteKey,
-        siteLabel: baseProps.siteLabel || meta.site,
-        siteUrl: baseProps.siteUrl || meta.url,
-      },
-      utmSource: raw.utmSource || raw.utm_source || null,
-      utmMedium: raw.utmMedium || raw.utm_medium || null,
-      utmCampaign: raw.utmCampaign || raw.utm_campaign || null,
+      props: withTrafficProps(
+        {
+          ...baseProps,
+          site: baseProps.site || meta.siteKey,
+          siteLabel: baseProps.siteLabel || meta.site,
+          siteUrl: baseProps.siteUrl || meta.url,
+        },
+        { utmSource, utmMedium, referrer }
+      ),
+      utmSource: utmSource ? String(utmSource).slice(0, 128) : null,
+      utmMedium: utmMedium ? String(utmMedium).slice(0, 128) : null,
+      utmCampaign: utmCampaign ? String(utmCampaign).slice(0, 128) : null,
+      country: geo.country,
+      region: geo.region,
+      city: geo.city,
       ts: raw.ts ? new Date(raw.ts) : new Date(),
     });
   }
