@@ -624,6 +624,7 @@ async function loadActivityDashboard() {
       <table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-xs uppercase text-slate-500">
           <tr>
+            <th class="px-3 py-2 text-left w-12">#</th>
             <th class="px-3 py-2 text-left">When <span class="normal-case font-normal text-slate-400">Showing ${shown} of ${filteredTotal}</span></th>
             <th class="px-3 py-2 text-left">Event</th>
             <th class="px-3 py-2 text-left">Site</th>
@@ -635,13 +636,14 @@ async function loadActivityDashboard() {
         <tbody class="divide-y divide-slate-100">
           ${
             list
-              .map((e) => {
+              .map((e, index) => {
                 const url = eventUrl(e);
                 const props = compactEventProps(e.props || {});
                 const who = e.userId || e.user_id || e.anonId || e.anon_id || 'unidentified';
                 const propsText = Object.keys(props).length ? JSON.stringify(props) : '—';
                 return `
             <tr class="hover:bg-slate-50">
+              <td class="px-3 py-2 text-slate-400 tabular-nums">${index + 1}</td>
               <td class="px-3 py-2 whitespace-nowrap text-slate-500">${fmtDate(e.ts)}</td>
               <td class="px-3 py-2">${badge(e.event, 'blue')}</td>
               <td class="px-3 py-2 text-xs">${escapeHtml(eventSite(e))}</td>
@@ -657,7 +659,7 @@ async function loadActivityDashboard() {
             </tr>`;
               })
               .join('') ||
-            '<tr><td colspan="6" class="px-3 py-6 text-slate-400">No events</td></tr>'
+            '<tr><td colspan="7" class="px-3 py-6 text-slate-400">No events</td></tr>'
           }
         </tbody>
       </table>`;
