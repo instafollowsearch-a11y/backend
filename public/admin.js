@@ -529,7 +529,7 @@ async function loadActivityDashboard() {
         : '';
     }
     $('activityKpis').innerHTML = [
-      kpiCard('Visitors', s.visitorsInRange, s.rangeLabel || ''),
+      kpiCard('Visitors', s.visitorsInRange, 'unique people (account, browser, or IP)'),
       kpiCard('Page views', s.pageViewsInRange, 'page views + story loads'),
       kpiCard('Events', s.eventsInRange, s.rangeLabel || ''),
       kpiCard('Searches', s.searchesInRange, s.rangeLabel || ''),
@@ -546,13 +546,13 @@ async function loadActivityDashboard() {
     $('activityTopPages').innerHTML = barRows(s.topPages || [], 'path');
     $('activityTopSearches').innerHTML = barRows(s.topSearchTargets || [], 'username');
     if ($('activityTrafficSources')) {
-      $('activityTrafficSources').innerHTML = barRows(s.trafficSources || [], 'source', 'visitors');
+      $('activityTrafficSources').innerHTML = barRows(s.trafficSources || [], 'source');
     }
     if ($('activityVisitorCountries')) {
-      $('activityVisitorCountries').innerHTML = barRows(s.visitorCountries || [], 'source', 'visitors');
+      $('activityVisitorCountries').innerHTML = barRows(s.visitorCountries || [], 'source');
     }
     if ($('activityVisitorCities')) {
-      $('activityVisitorCities').innerHTML = barRows(s.visitorCities || [], 'source', 'visitors');
+      $('activityVisitorCities').innerHTML = barRows(s.visitorCities || [], 'source');
     }
 
     const list = events.success ? events.data.events : s.recentEvents || [];

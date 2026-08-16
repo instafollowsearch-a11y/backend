@@ -1,5 +1,5 @@
 import AnalyticsEvent from '../models/AnalyticsEvent.js';
-import { lookupGeoFromIp } from './geoLookup.js';
+import { anonIdFromIp, lookupGeoFromIp } from './geoLookup.js';
 import {
   referrerHostOf,
   resolveTrafficSource,
@@ -115,11 +115,12 @@ export const emitAnalyticsEvent = async ({
       { utmSource, utmMedium, referrer }
     );
     const geo = lookupGeoFromIp(clientIp);
+    const resolvedAnon = anonId || anonIdFromIp(clientIp);
     return await AnalyticsEvent.create({
       event,
       path: path ? String(path).slice(0, 512) : null,
       userId: userId || null,
-      anonId: anonId ? String(anonId).slice(0, 64) : null,
+      anonId: resolvedAnon ? String(resolvedAnon).slice(0, 64) : null,
       props: mergedProps,
       utmSource: utmSource ? String(utmSource).slice(0, 128) : null,
       utmMedium: utmMedium ? String(utmMedium).slice(0, 128) : null,
@@ -157,11 +158,12 @@ export const ingestAnalyticsEvents = async (events, { userId = null, clientIp = 
     const utmMedium = raw.utmMedium || raw.utm_medium || null;
     const utmCampaign = raw.utmCampaign || raw.utm_campaign || null;
     const referrer = raw.referrer || baseProps.referrer || null;
+    const resolvedAnon = raw.anonId || anonIdFromIp(clientIp);
     rows.push({
       event: raw.event,
       path: raw.path ? String(raw.path).slice(0, 512) : null,
       userId: userId || raw.userId || null,
-      anonId: raw.anonId ? String(raw.anonId).slice(0, 64) : null,
+      anonId: resolvedAnon ? String(resolvedAnon).slice(0, 64) : null,
       props: withTrafficProps(
         {
           ...baseProps,

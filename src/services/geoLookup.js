@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
@@ -51,6 +52,19 @@ const countryLabel = (code) => {
   } catch {
     return code;
   }
+};
+
+/**
+ * Stable anonymous id from IP (hashed). Raw IP is not stored.
+ */
+export const anonIdFromIp = (ip) => {
+  if (!ip || isPrivateIp(ip)) return null;
+  const salt = process.env.ANON_IP_SALT || 'instafollowcheck-anon';
+  const digest = createHash('sha256')
+    .update(`${salt}|${ip}`)
+    .digest('hex')
+    .slice(0, 24);
+  return `ip_${digest}`;
 };
 
 /**

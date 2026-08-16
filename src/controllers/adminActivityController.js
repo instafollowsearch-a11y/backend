@@ -311,19 +311,15 @@ export const getActivitySummary = async (req, res) => {
       )
       .sort((a, b) => b.count - a.count);
 
-    const funnelSteps = [
-      'page_view',
-      'search',
-      'shared_activity',
-      'admirers',
-      'view_profile',
-      'upgrade_cta',
-      'checkout_started',
+    const funnel = [
+      { step: 'visit', count: pageViewsInRange },
+      { step: 'search', count: searchesInRange },
+      { step: 'shared_activity', count: await countEvent('shared_activity', tsWhere) },
+      { step: 'admirers', count: await countEvent('admirers', tsWhere) },
+      { step: 'view_profile', count: await countEvent('view_profile', tsWhere) },
+      { step: 'upgrade_cta', count: upgradeCtas },
+      { step: 'checkout_started', count: checkoutStarted },
     ];
-    const funnel = [];
-    for (const step of funnelSteps) {
-      funnel.push({ step, count: await countEvent(step, tsWhere) });
-    }
 
     const dailySeriesRaw = await AnalyticsEvent.findAll({
       attributes: [
@@ -443,13 +439,13 @@ export const getActivitySummary = async (req, res) => {
           source: r.source || 'Direct / unknown',
           visitors: Number(r.visitors),
           pageViews: Number(r.pageViews),
-          count: Number(r.visitors),
+          count: Number(r.pageViews) || Number(r.visitors),
         })),
         visitorCountries: visitorCountriesRaw.map((r) => ({
           source: r.country,
           visitors: Number(r.visitors),
           pageViews: Number(r.pageViews),
-          count: Number(r.visitors),
+          count: Number(r.pageViews) || Number(r.visitors),
         })),
         visitorCities: visitorCitiesRaw.map((r) => {
           const label = [r.city, r.region, r.country].filter(Boolean).join(', ');
@@ -457,7 +453,7 @@ export const getActivitySummary = async (req, res) => {
             source: label,
             visitors: Number(r.visitors),
             pageViews: Number(r.pageViews),
-            count: Number(r.visitors),
+            count: Number(r.pageViews) || Number(r.visitors),
           };
         }),
         recentEvents: recentEvents.map(decorateEvent),
