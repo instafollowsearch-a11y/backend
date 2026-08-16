@@ -530,7 +530,7 @@ async function loadActivityDashboard() {
     }
     $('activityKpis').innerHTML = [
       kpiCard('Visitors', s.visitorsInRange, s.rangeLabel || ''),
-      kpiCard('Page views', s.pageViewsInRange, s.rangeLabel || ''),
+      kpiCard('Page views', s.pageViewsInRange, 'page views + story loads'),
       kpiCard('Events', s.eventsInRange, s.rangeLabel || ''),
       kpiCard('Searches', s.searchesInRange, s.rangeLabel || ''),
       kpiCard('Searchers', s.uniqueSearchersInRange, 'unique people who searched'),

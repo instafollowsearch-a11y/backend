@@ -9,6 +9,8 @@ import { resolveEventSiteMeta } from '../services/productAnalyticsService.js';
 import { trafficSourceSql } from '../services/trafficSource.js';
 
 const SEARCH_EVENTS = ['search', 'story_viewer_search'];
+/** Landing + story loads — what the client sees as “pages / visits”. */
+const VISIT_EVENTS = ['page_view', 'story_viewer'];
 
 const daysAgo = (n) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
 
@@ -176,6 +178,7 @@ export const getActivitySummary = async (req, res) => {
       mau,
       eventsInRange,
       visitorsInRange,
+      pageViewsInRange,
       searchesInRange,
       uniqueSearchersInRange,
       activePaid,
@@ -192,6 +195,7 @@ export const getActivitySummary = async (req, res) => {
       countUniqueActors({ [Op.gte]: since30 }),
       AnalyticsEvent.count({ where: { ts: tsWhere } }),
       countUniqueActors(tsWhere),
+      countEventsIn(VISIT_EVENTS, tsWhere),
       countEventsIn(SEARCH_EVENTS, tsWhere),
       countUniqueActors(tsWhere, { event: { [Op.in]: SEARCH_EVENTS } }),
       countActiveSubscriptions(),
@@ -220,36 +224,92 @@ export const getActivitySummary = async (req, res) => {
       'checkout_started',
       'page_view',
     ];
-    const featureUsage = [];
-    for (const event of featureEvents) {
-      const count = await countEvent(event, tsWhere);
-      if (count > 0 || ['search', 'checkout_started', 'page_view'].includes(event)) {
-        featureUsage.push({ event, count });
-      }
-    }
-    featureUsage.sort((a, b) => b.count - a.count);
-
-    const topEventsRaw = await AnalyticsEvent.findAll({
-      attributes: ['event', [fn('COUNT', col('id')), 'count']],
-      where: { ts: tsWhere },
-      group: ['event'],
-      order: [[literal('count'), 'DESC']],
-      limit: 20,
-      raw: true,
-    });
-
-    const topPagesRaw = await AnalyticsEvent.findAll({
-      attributes: ['path', [fn('COUNT', col('id')), 'count']],
-      where: {
-        ts: tsWhere,
-        event: 'page_view',
-        path: { [Op.ne]: null },
-      },
-      group: ['path'],
-      order: [[literal('count'), 'DESC']],
-      limit: 20,
-      raw: true,
-    });
+    const visitWhere = {
+      ts: tsWhere,
+      event: { [Op.in]: VISIT_EVENTS },
+    };
+    const sourceExpr = literal(trafficSourceSql());
+    const [
+      featureCounts,
+      topEventsRaw,
+      topPagesRaw,
+      trafficSourcesRaw,
+      visitorCountriesRaw,
+      visitorCitiesRaw,
+    ] = await Promise.all([
+      Promise.all(featureEvents.map((event) => countEvent(event, tsWhere))),
+      AnalyticsEvent.findAll({
+        attributes: ['event', [fn('COUNT', col('id')), 'count']],
+        where: { ts: tsWhere },
+        group: ['event'],
+        order: [[literal('count'), 'DESC']],
+        limit: 20,
+        raw: true,
+      }),
+      AnalyticsEvent.findAll({
+        attributes: ['path', [fn('COUNT', col('id')), 'count']],
+        where: {
+          ...visitWhere,
+          path: { [Op.ne]: null },
+        },
+        group: ['path'],
+        order: [[literal('count'), 'DESC']],
+        limit: 20,
+        raw: true,
+      }),
+      AnalyticsEvent.findAll({
+        attributes: [
+          [sourceExpr, 'source'],
+          [fn('COUNT', col('id')), 'pageViews'],
+          [fn('COUNT', literal("DISTINCT COALESCE(user_id::text, anon_id)")), 'visitors'],
+        ],
+        where: visitWhere,
+        group: [sourceExpr],
+        order: [[literal('visitors'), 'DESC']],
+        limit: 20,
+        raw: true,
+      }),
+      AnalyticsEvent.findAll({
+        attributes: [
+          'country',
+          [fn('COUNT', col('id')), 'pageViews'],
+          [fn('COUNT', literal("DISTINCT COALESCE(user_id::text, anon_id)")), 'visitors'],
+        ],
+        where: {
+          ...visitWhere,
+          country: { [Op.ne]: null },
+        },
+        group: ['country'],
+        order: [[literal('visitors'), 'DESC']],
+        limit: 20,
+        raw: true,
+      }),
+      AnalyticsEvent.findAll({
+        attributes: [
+          'city',
+          'region',
+          'country',
+          [fn('COUNT', col('id')), 'pageViews'],
+          [fn('COUNT', literal("DISTINCT COALESCE(user_id::text, anon_id)")), 'visitors'],
+        ],
+        where: {
+          ...visitWhere,
+          city: { [Op.ne]: null },
+        },
+        group: ['city', 'region', 'country'],
+        order: [[literal('visitors'), 'DESC']],
+        limit: 20,
+        raw: true,
+      }),
+    ]);
+    const featureUsage = featureEvents
+      .map((event, i) => ({ event, count: featureCounts[i] }))
+      .filter(
+        (row) =>
+          row.count > 0 ||
+          ['search', 'checkout_started', 'page_view', 'story_viewer'].includes(row.event)
+      )
+      .sort((a, b) => b.count - a.count);
 
     const funnelSteps = [
       'page_view',
@@ -264,8 +324,6 @@ export const getActivitySummary = async (req, res) => {
     for (const step of funnelSteps) {
       funnel.push({ step, count: await countEvent(step, tsWhere) });
     }
-    const pageViewsInRange =
-      funnel.find((step) => step.step === 'page_view')?.count ?? 0;
 
     const dailySeriesRaw = await AnalyticsEvent.findAll({
       attributes: [
@@ -322,59 +380,6 @@ export const getActivitySummary = async (req, res) => {
       raw: true,
     });
 
-    const sourceExpr = literal(trafficSourceSql());
-    const trafficSourcesRaw = await AnalyticsEvent.findAll({
-      attributes: [
-        [sourceExpr, 'source'],
-        [fn('COUNT', col('id')), 'pageViews'],
-        [fn('COUNT', literal("DISTINCT COALESCE(user_id::text, anon_id)")), 'visitors'],
-      ],
-      where: {
-        ts: tsWhere,
-        event: 'page_view',
-      },
-      group: [sourceExpr],
-      order: [[literal('visitors'), 'DESC']],
-      limit: 20,
-      raw: true,
-    });
-
-    const visitorCountriesRaw = await AnalyticsEvent.findAll({
-      attributes: [
-        'country',
-        [fn('COUNT', col('id')), 'pageViews'],
-        [fn('COUNT', literal("DISTINCT COALESCE(user_id::text, anon_id)")), 'visitors'],
-      ],
-      where: {
-        ts: tsWhere,
-        event: 'page_view',
-        country: { [Op.ne]: null },
-      },
-      group: ['country'],
-      order: [[literal('visitors'), 'DESC']],
-      limit: 20,
-      raw: true,
-    });
-
-    const visitorCitiesRaw = await AnalyticsEvent.findAll({
-      attributes: [
-        'city',
-        'region',
-        'country',
-        [fn('COUNT', col('id')), 'pageViews'],
-        [fn('COUNT', literal("DISTINCT COALESCE(user_id::text, anon_id)")), 'visitors'],
-      ],
-      where: {
-        ts: tsWhere,
-        event: 'page_view',
-        city: { [Op.ne]: null },
-      },
-      group: ['city', 'region', 'country'],
-      order: [[literal('visitors'), 'DESC']],
-      limit: 20,
-      raw: true,
-    });
-
     return res.json({
       success: true,
       data: {
@@ -406,9 +411,12 @@ export const getActivitySummary = async (req, res) => {
           count: Number(r.count),
         })),
         topPages: topPagesRaw.map((r) => {
-          const meta = resolveEventSiteMeta({ path: r.path, event: 'page_view' });
-          return {
+          const meta = resolveEventSiteMeta({
             path: r.path,
+            event: r.path === '/story-viewer' ? 'story_viewer' : 'page_view',
+          });
+          return {
+            path: r.path === '/story-viewer' ? '/' : r.path,
             site: meta.site,
             url: meta.url,
             count: Number(r.count),

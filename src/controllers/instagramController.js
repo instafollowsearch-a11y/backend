@@ -9,6 +9,7 @@ import {
 } from '../services/utils/storyViewerCache.js';
 import { getPostComentsWithCap, getPostLikers, getUserInfo } from '../services/utils/hikerHelperFunctions.js';
 import { emitAnalyticsEvent } from '../services/productAnalyticsService.js';
+import { getClientIp } from '../services/geoLookup.js';
 
 // Search for recent followers/following - RANDOM DATA for motivation
 export const searchRecent = async (req, res, next) => {
@@ -588,8 +589,25 @@ export const getStoryViewer = async (req, res, next) => {
     const { username } = req.body;
     const normalized = username.trim().replace(/^@+/, '');
 
+    const emitStoryVisit = () => {
+      void emitAnalyticsEvent({
+        event: 'story_viewer',
+        path: '/story-viewer',
+        site: 'story_viewer',
+        userId: req.user?.id || null,
+        anonId: req.body?.anonId || null,
+        utmSource: req.body?.utmSource || req.body?.utm_source || null,
+        utmMedium: req.body?.utmMedium || req.body?.utm_medium || null,
+        utmCampaign: req.body?.utmCampaign || req.body?.utm_campaign || null,
+        referrer: req.body?.referrer || null,
+        clientIp: getClientIp(req),
+        props: { username: normalized },
+      });
+    };
+
     const cached = getStoryViewerCache(normalized);
     if (cached) {
+      emitStoryVisit();
       return res.status(200).json({
         success: true,
         data: cached,
@@ -631,13 +649,7 @@ export const getStoryViewer = async (req, res, next) => {
       });
     }
 
-    void emitAnalyticsEvent({
-      event: 'story_viewer',
-      path: '/story-viewer',
-      site: 'story_viewer',
-      userId: req.user?.id || null,
-      props: { username: normalized },
-    });
+    emitStoryVisit();
 
     res.status(200).json({
       success: true,
