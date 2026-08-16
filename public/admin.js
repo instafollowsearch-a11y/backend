@@ -76,6 +76,23 @@ function kpiCard(label, value, hint = '') {
     </div>`;
 }
 
+function uniqueVsVolumeHint(unique, volume, volumeWord, whenIdentified) {
+  const people = Number(unique) || 0;
+  const visits = Number(volume) || 0;
+  if (people === 0 && visits > 0) return `0 identified · ${visits} ${volumeWord}`;
+  return whenIdentified;
+}
+
+function compactEventProps(props = {}) {
+  const skip = new Set(['site', 'siteLabel', 'siteUrl', 'referrerHost']);
+  const out = {};
+  Object.entries(props).forEach(([key, value]) => {
+    if (skip.has(key) || value == null || value === '') return;
+    out[key] = value;
+  });
+  return out;
+}
+
 function barRows(items, labelKey, countKey = 'count') {
   if (!items?.length) return '<p class="text-slate-400">No data yet</p>';
   const barValue = (item) => {
@@ -99,9 +116,10 @@ function barRows(items, labelKey, countKey = 'count') {
         ? `<div class="text-[11px] text-indigo-600 truncate" title="${escapeHtml(item.url)}">${escapeHtml(item.url)}</div>`
         : '';
       const unique = Number(item.visitors);
+      const unit = item.pageViews != null ? ' visits' : '';
       const extra =
         Number.isFinite(unique) && unique > 0
-          ? `<div class="text-[11px] text-slate-500">${escapeHtml(String(unique))} unique</div>`
+          ? `<div class="text-[11px] text-slate-500">${escapeHtml(String(unique))} unique people</div>`
           : '';
       return `
         <div>
@@ -110,7 +128,7 @@ function barRows(items, labelKey, countKey = 'count') {
               <span class="truncate block">${escapeHtml(label)}</span>
               ${site}${url}${extra}
             </div>
-            <span class="text-slate-500 shrink-0">${count}</span>
+            <span class="text-slate-500 shrink-0">${count}${unit}</span>
           </div>
           <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
         </div>`;
@@ -539,15 +557,39 @@ async function loadActivityDashboard() {
         : '';
     }
     $('activityKpis').innerHTML = [
-      kpiCard('Visitors', s.visitorsInRange, 'unique people (account, browser, or IP)'),
-      kpiCard('Page views', s.pageViewsInRange, 'page views + story loads'),
+      kpiCard('Visits', s.pageViewsInRange, 'page views + story loads'),
+      kpiCard(
+        'Unique visitors',
+        s.visitorsInRange,
+        uniqueVsVolumeHint(
+          s.visitorsInRange,
+          s.pageViewsInRange,
+          'visits',
+          'account, browser, or hashed IP'
+        )
+      ),
       kpiCard('Events', s.eventsInRange, s.rangeLabel || ''),
       kpiCard('Searches', s.searchesInRange, s.rangeLabel || ''),
-      kpiCard('Searchers', s.uniqueSearchersInRange, 'unique people who searched'),
-      kpiCard('DAU', s.dau, 'rolling last 1 day'),
-      kpiCard('WAU', s.wau, 'rolling last 7 days'),
-      kpiCard('MAU', s.mau, 'rolling last 30 days'),
-      kpiCard('Paid', s.activePaid),
+      kpiCard(
+        'Unique searchers',
+        s.uniqueSearchersInRange,
+        uniqueVsVolumeHint(
+          s.uniqueSearchersInRange,
+          s.searchesInRange,
+          'searches',
+          'people who searched'
+        )
+      ),
+      kpiCard(
+        'DAU',
+        s.dau,
+        s.dau === 0 && (s.rangeLabel === 'Last 24 hours' || s.rangeDays === 1)
+          ? uniqueVsVolumeHint(s.dau, s.pageViewsInRange, 'visits in this window', 'identified · last 1 day')
+          : 'identified people · rolling last 1 day'
+      ),
+      kpiCard('WAU', s.wau, 'identified people · rolling last 7 days'),
+      kpiCard('MAU', s.mau, 'identified people · rolling last 30 days'),
+      kpiCard('Paid', s.activePaid, 'active subscriptions now'),
       kpiCard('Upgrades CTA', s.upgradeCtas, s.rangeLabel || ''),
       kpiCard('Checkouts', s.checkoutStarted, s.rangeLabel || ''),
     ].join('');
@@ -572,10 +614,9 @@ async function loadActivityDashboard() {
       const chip = (label, value) =>
         `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 text-slate-700">${escapeHtml(label)} <strong>${escapeHtml(String(value ?? 0))}</strong></span>`;
       $('activityStreamCounts').innerHTML = [
+        chip('Visits', s.pageViewsInRange),
+        chip('Unique', s.visitorsInRange),
         chip('Searches', s.searchesInRange),
-        chip('Searchers', s.uniqueSearchersInRange),
-        chip('Page views', s.pageViewsInRange),
-        chip('Visitors', s.visitorsInRange),
         chip('Events', s.eventsInRange),
       ].join('');
     }
@@ -596,10 +637,9 @@ async function loadActivityDashboard() {
             list
               .map((e) => {
                 const url = eventUrl(e);
-                const props = { ...(e.props || {}) };
-                delete props.siteLabel;
-                delete props.siteUrl;
-                delete props.site;
+                const props = compactEventProps(e.props || {});
+                const who = e.userId || e.user_id || e.anonId || e.anon_id || 'unidentified';
+                const propsText = Object.keys(props).length ? JSON.stringify(props) : '—';
                 return `
             <tr class="hover:bg-slate-50">
               <td class="px-3 py-2 whitespace-nowrap text-slate-500">${fmtDate(e.ts)}</td>
@@ -612,8 +652,8 @@ async function loadActivityDashboard() {
                     : escapeHtml(e.path || '—')
                 }
               </td>
-              <td class="px-3 py-2 font-mono text-xs">${escapeHtml(e.userId || e.user_id || e.anonId || e.anon_id || '—')}</td>
-              <td class="px-3 py-2 text-xs text-slate-500 truncate max-w-[200px]">${escapeHtml(JSON.stringify(props))}</td>
+              <td class="px-3 py-2 font-mono text-xs">${escapeHtml(who)}</td>
+              <td class="px-3 py-2 text-xs text-slate-500 truncate max-w-[200px]">${escapeHtml(propsText)}</td>
             </tr>`;
               })
               .join('') ||

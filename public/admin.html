@@ -238,19 +238,19 @@
                     </div>
                     <div class="bg-white border border-slate-200 rounded-2xl p-5">
                         <h3 class="font-semibold mb-1">Traffic sources</h3>
-                        <p class="text-[11px] text-slate-500 mb-3">From UTM and referrer on visits (page views + story loads). In-app browsers often hide referrer — use ?utm_source=instagram on ads. Older story loads without UTM show Direct / unknown.</p>
+                        <p class="text-[11px] text-slate-500 mb-3">Bar = visits. Unique people only appear when we have an id. No UTM/referrer → Direct / unknown.</p>
                         <div id="activityTrafficSources" class="space-y-2 text-sm"></div>
                     </div>
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
                     <div class="bg-white border border-slate-200 rounded-2xl p-5">
-                        <h3 class="font-semibold mb-1">Visitor countries</h3>
-                        <p class="text-[11px] text-slate-500 mb-3">From IP on visits (page views + story loads). Approximate; VPNs are empty. Rows from before geo was enabled stay blank.</p>
+                        <h3 class="font-semibold mb-1">Countries</h3>
+                        <p class="text-[11px] text-slate-500 mb-3">Bar = visits with a known country. Not unique people. Missing geo is omitted, not shown as 0.</p>
                         <div id="activityVisitorCountries" class="space-y-2 text-sm"></div>
                     </div>
                     <div class="bg-white border border-slate-200 rounded-2xl p-5">
-                        <h3 class="font-semibold mb-1">Visitor cities</h3>
-                        <p class="text-[11px] text-slate-500 mb-3">City, state/region, country when the lookup returns them.</p>
+                        <h3 class="font-semibold mb-1">Cities</h3>
+                        <p class="text-[11px] text-slate-500 mb-3">Bar = visits with a known city. Not unique people.</p>
                         <div id="activityVisitorCities" class="space-y-2 text-sm"></div>
                     </div>
                 </div>
@@ -493,6 +493,6 @@
         </div>
     </div>
 
-    <script src="/admin.js?v=20260816c"></script>
+    <script src="/admin.js?v=20260816d"></script>
 </body>
 </html>
