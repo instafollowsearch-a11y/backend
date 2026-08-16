@@ -78,11 +78,19 @@ function kpiCard(label, value, hint = '') {
 
 function barRows(items, labelKey, countKey = 'count') {
   if (!items?.length) return '<p class="text-slate-400">No data yet</p>';
-  const max = Math.max(...items.map((i) => Number(i[countKey] || 0)), 1);
+  const barValue = (item) => {
+    const preferred = Number(item[countKey]);
+    if (Number.isFinite(preferred) && preferred > 0) return preferred;
+    const pageViews = Number(item.pageViews);
+    if (Number.isFinite(pageViews) && pageViews > 0) return pageViews;
+    const fallback = Number(item.count);
+    return Number.isFinite(fallback) ? fallback : 0;
+  };
+  const max = Math.max(...items.map(barValue), 1);
   return items
     .map((item) => {
       const label = item[labelKey] || '—';
-      const count = Number(item[countKey] || 0);
+      const count = barValue(item);
       const pct = Math.round((count / max) * 100);
       const site = item.site
         ? `<div class="text-[11px] text-slate-500">${escapeHtml(item.site)}</div>`
@@ -90,9 +98,11 @@ function barRows(items, labelKey, countKey = 'count') {
       const url = item.url
         ? `<div class="text-[11px] text-indigo-600 truncate" title="${escapeHtml(item.url)}">${escapeHtml(item.url)}</div>`
         : '';
-      const extra = item.pageViews != null
-        ? `<div class="text-[11px] text-slate-500">${escapeHtml(String(item.pageViews))} page views</div>`
-        : '';
+      const unique = Number(item.visitors);
+      const extra =
+        Number.isFinite(unique) && unique > 0
+          ? `<div class="text-[11px] text-slate-500">${escapeHtml(String(unique))} unique</div>`
+          : '';
       return `
         <div>
           <div class="flex justify-between gap-2 mb-1">
