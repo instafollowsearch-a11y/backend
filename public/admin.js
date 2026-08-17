@@ -993,7 +993,8 @@ async function loadPeopleList(page = 1) {
       const loc = [p.city, p.region, p.country].filter(Boolean).join(', ') || '—';
       const kind = p.kind === 'user' ? badge('Account', 'indigo') : badge('Anonymous', 'slate');
       const bot = p.isBot ? ` ${badge('bot/api', 'rose')}` : '';
-      const [kindPart, idPart] = String(p.personKey || '').split('/');
+      const personKind = p.kind === 'user' ? 'u' : 'a';
+      const personId = p.kind === 'user' ? p.userId : p.anonId;
       tr.innerHTML = `
         <td class="px-3 py-3">
           <div class="font-medium">${escapeHtml(label)}</div>
@@ -1005,7 +1006,7 @@ async function loadPeopleList(page = 1) {
         <td class="px-3 py-3 text-xs">${p.eventCount} events · ${p.visitCount} visits · ${p.searchCount} searches</td>
         <td class="px-3 py-3 text-slate-500 whitespace-nowrap">${fmtDate(p.lastSeen)}</td>
         <td class="px-3 py-3">
-          <button type="button" class="text-indigo-600 hover:underline text-sm js-open-person" data-kind="${escapeHtml(kindPart)}" data-id="${escapeHtml(idPart || '')}">Details</button>
+          <button type="button" class="text-indigo-600 hover:underline text-sm js-open-person" data-kind="${personKind}" data-id="${escapeHtml(personId || '')}">Details</button>
         </td>`;
       tbody.appendChild(tr);
     });
@@ -1092,6 +1093,7 @@ async function openPersonDrawer(kind, id) {
         <p><span class="text-slate-500">First / last</span> ${fmtDate(p.firstSeen)} → ${fmtDate(p.lastSeen)}</p>
         <p class="mt-2 text-slate-500">IP addresses</p>
         <ul class="list-disc pl-5 space-y-1">${ipList}</ul>
+        ${p.events?.some((e) => e.ipInferred) ? '<p class="text-[11px] text-slate-500 mt-1">Some event rows show an inferred IP from matching search history.</p>' : ''}
         <p class="mt-2 text-slate-500">User agents</p>
         <ul class="list-disc pl-5 space-y-1">${uaList}</ul>
         <p class="mt-2 text-slate-500">Origin / referer hosts</p>

@@ -8,6 +8,7 @@ import { sequelize } from '../config/database.js';
 import { countActiveSubscriptions } from '../services/localSubscriptionService.js';
 import { resolveEventSiteMeta } from '../services/productAnalyticsService.js';
 import { trafficSourceSql } from '../services/trafficSource.js';
+import { anonIdFromIp, sanitizeClientIp } from '../services/geoLookup.js';
 
 const SEARCH_EVENTS = ['search', 'story_viewer_search'];
 /** Landing + story loads — what the client sees as “pages / visits”. */
@@ -131,6 +132,17 @@ const parseActivityRange = (query = {}) => {
   };
 };
 
+const ipToString = (value) => {
+  if (value == null || value === '') return null;
+  if (typeof value === 'string') return value;
+  return String(value);
+};
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const isUuid = (value) => UUID_RE.test(String(value || ''));
+
 /**
  * Attach site label + full URL for admin UI (works for older rows too).
  */
@@ -142,9 +154,12 @@ const decorateEvent = (row) => {
     path: plain.path,
     props,
   });
+  const clientIp = ipToString(
+    plain.clientIp || plain.client_ip || props.clientIp || null
+  );
   return {
     ...plain,
-    clientIp: plain.clientIp || plain.client_ip || props.clientIp || null,
+    clientIp,
     userAgent: plain.userAgent || plain.user_agent || props.ua || null,
     requestOrigin: plain.requestOrigin || plain.request_origin || props.origin || null,
     site: meta.site,
@@ -156,6 +171,41 @@ const decorateEvent = (row) => {
       siteUrl: props.siteUrl || meta.url,
       site: props.site || meta.siteKey,
     },
+  };
+};
+
+/**
+ * Older analytics rows hashed IP into anon_id but did not store the IP.
+ * Recover it when the same IP appears on search_history.
+ */
+const recoverIdentityFromSearches = async (anonId) => {
+  if (!anonId || !String(anonId).startsWith('ip_')) {
+    return { ips: [], userAgents: [], searches: [] };
+  }
+  const rows = await sequelize.query(
+    `SELECT id, target_username AS "targetUsername", search_type AS "searchType",
+            ip_address::text AS "ipAddress", user_agent AS "userAgent",
+            status, created_at AS "createdAt", user_id AS "userId"
+     FROM search_history
+     WHERE created_at >= NOW() - INTERVAL '90 days'
+     ORDER BY created_at DESC
+     LIMIT 8000`,
+    { type: QueryTypes.SELECT }
+  );
+  const ips = new Set();
+  const userAgents = new Set();
+  const searches = [];
+  for (const row of rows) {
+    const ip = sanitizeClientIp(row.ipAddress) || ipToString(row.ipAddress);
+    if (!ip || anonIdFromIp(ip) !== anonId) continue;
+    ips.add(ip);
+    if (row.userAgent) userAgents.add(row.userAgent);
+    if (searches.length < 50) searches.push(row);
+  }
+  return {
+    ips: [...ips],
+    userAgents: [...userAgents],
+    searches,
   };
 };
 
@@ -765,10 +815,11 @@ export const getActivityPerson = async (req, res) => {
     if (!id || !['u', 'a', 'user', 'anon'].includes(kind)) {
       return res.status(400).json({ success: false, message: 'Invalid person id' });
     }
-    const isUser = kind === 'u' || kind === 'user';
+    let isUser = kind === 'u' || kind === 'user';
+    if (isUser && !isUuid(id)) isUser = false;
     const where = isUser
       ? { userId: id }
-      : { userId: null, anonId: id };
+      : { anonId: id };
     const events = await AnalyticsEvent.findAll({
       where,
       order: [['ts', 'DESC']],
@@ -778,16 +829,24 @@ export const getActivityPerson = async (req, res) => {
       return res.status(404).json({ success: false, message: 'No events for this person' });
     }
     const decorated = events.map(decorateEvent);
+    const recovered = isUser
+      ? { ips: [], userAgents: [], searches: [] }
+      : await recoverIdentityFromSearches(id);
     const ips = [
       ...new Set(
-        decorated
-          .map((e) => e.clientIp || e.props?.clientIp)
-          .filter(Boolean)
-          .map(String)
+        [
+          ...decorated.map((e) => e.clientIp),
+          ...recovered.ips,
+        ].filter(Boolean)
       ),
     ];
     const userAgents = [
-      ...new Set(decorated.map((e) => e.userAgent).filter(Boolean)),
+      ...new Set(
+        [
+          ...decorated.map((e) => e.userAgent),
+          ...recovered.userAgents,
+        ].filter(Boolean)
+      ),
     ];
     const origins = [
       ...new Set(decorated.map((e) => e.requestOrigin).filter(Boolean)),
@@ -799,32 +858,44 @@ export const getActivityPerson = async (req, res) => {
     let account = null;
     if (isUser) {
       account = await User.findByPk(id, {
-        attributes: { exclude: ['password', 'passwordHash'] },
+        attributes: { exclude: ['passwordHash'] },
       });
     }
+    let searches = recovered.searches;
     const searchWhere = isUser
       ? { [Op.or]: [{ userId: id }, ...(ips.length ? [{ ipAddress: { [Op.in]: ips } }] : [])] }
       : ips.length
         ? { ipAddress: { [Op.in]: ips } }
         : null;
-    const searches = searchWhere
-      ? await SearchHistory.findAll({
-            where: searchWhere,
-            order: [['createdAt', 'DESC']],
-            limit: 50,
-            attributes: [
-              'id',
-              'targetUsername',
-              'searchType',
-              'ipAddress',
-              'userAgent',
-              'status',
-              'createdAt',
-              'userId',
-            ],
-          })
-      : [];
+    if (searchWhere) {
+      try {
+        searches = await SearchHistory.findAll({
+          where: searchWhere,
+          order: [['createdAt', 'DESC']],
+          limit: 50,
+          attributes: [
+            'id',
+            'targetUsername',
+            'searchType',
+            'ipAddress',
+            'userAgent',
+            'status',
+            'createdAt',
+            'userId',
+          ],
+        });
+      } catch (searchErr) {
+        console.warn('getActivityPerson searches:', searchErr.message);
+      }
+    }
     const latest = decorated[0];
+    const inferredIp = ips[0] || null;
+    const eventsOut = decorated.map((e) => ({
+      ...e,
+      clientIp: e.clientIp || inferredIp,
+      ipInferred: !e.clientIp && Boolean(inferredIp),
+    }));
+    const recoveredOnly = recovered.ips.length > 0 && !decorated.some((e) => e.clientIp);
     return res.json({
       success: true,
       data: {
@@ -832,7 +903,13 @@ export const getActivityPerson = async (req, res) => {
         personKey: isUser ? `u/${id}` : `a/${id}`,
         userId: isUser ? id : null,
         anonId: isUser ? latest.anonId || null : id,
-        account: account ? account.toJSON() : null,
+        account: account
+          ? (() => {
+              const json = account.toJSON();
+              delete json.passwordHash;
+              return json;
+            })()
+          : null,
         firstSeen: decorated[decorated.length - 1]?.ts,
         lastSeen: latest.ts,
         country: latest.country,
@@ -844,11 +921,12 @@ export const getActivityPerson = async (req, res) => {
         userAgents,
         origins,
         eventCounts,
-        events: decorated,
+        events: eventsOut,
         searches,
-        note:
-          ips.length === 0
-            ? 'Raw IP was not stored on older events. New visits record IP for this admin view.'
+        note: recoveredOnly
+          ? 'IP recovered from matching search-history records (same hashed identity). Older analytics rows did not store raw IP.'
+          : ips.length === 0
+            ? 'Raw IP was not stored on these events, and no matching search-history IP was found. New visits store IP on the event.'
             : null,
       },
     });
@@ -856,7 +934,7 @@ export const getActivityPerson = async (req, res) => {
     console.error('getActivityPerson error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Failed to load person',
+      message: `Failed to load person: ${error.message || 'server error'}`,
     });
   }
 };
