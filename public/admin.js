@@ -1006,8 +1006,13 @@ async function loadPeopleList(page = 1) {
         <td class="px-3 py-3">${kind}${bot}</td>
         <td class="px-3 py-3 text-xs">${p.eventCount} events · ${p.visitCount} visits · ${p.searchCount} searches</td>
         <td class="px-3 py-3 text-slate-500 whitespace-nowrap">${fmtDate(p.lastSeen)}</td>
-        <td class="px-3 py-3">
+        <td class="px-3 py-3 whitespace-nowrap">
           <button type="button" class="text-indigo-600 hover:underline text-sm js-open-person" data-kind="${personKind}" data-id="${escapeHtml(personId || '')}">Details</button>
+          ${
+            p.clientIp
+              ? `<button type="button" class="ml-3 text-rose-600 hover:underline text-sm js-block-person" data-ip="${escapeHtml(p.clientIp)}" data-anon="${escapeHtml(p.anonId || '')}" data-user="${escapeHtml(p.userId || '')}">Block</button>`
+              : `<span class="ml-3 text-slate-400 text-xs" title="No stored IP on this visitor">No IP</span>`
+          }
         </td>`;
       tbody.appendChild(tr);
     });
@@ -1015,6 +1020,16 @@ async function loadPeopleList(page = 1) {
       tbody.innerHTML = '<tr><td colspan="7" class="px-3 py-6 text-slate-400">No people in this window</td></tr>';
     }
     bindPersonLinks(tbody);
+    tbody.querySelectorAll('.js-block-person').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const ok = await blockVisitorIp(btn.dataset.ip, {
+          reason: `Blocked from People ${btn.dataset.anon || btn.dataset.user || ''}`.trim(),
+          anonId: btn.dataset.anon || null,
+          userId: btn.dataset.user || null,
+        });
+        if (ok) loadPeopleList(page);
+      });
+    });
     displayPagination(data.data.pagination, 'peoplePagination', loadPeopleList);
   } catch (err) {
     console.error(err);
@@ -1188,9 +1203,10 @@ async function blockVisitorIp(ip, { reason = '', anonId = null, userId = null, s
   });
   if (!data.success) {
     showAlert(data.message || 'Block failed', 'error');
-    return;
+    return false;
   }
   if (!silent) showAlert(data.message || 'IP blocked');
+  return true;
 }
 
 async function loadBlockedIps() {
