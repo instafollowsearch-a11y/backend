@@ -56,6 +56,7 @@ export const sanitizeClientIp = (ip) => {
   const raw = String(ip || '')
     .trim()
     .replace(/^::ffff:/, '')
+    .replace(/\/\d+$/, '')
     .slice(0, 45);
   if (!raw) return null;
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(raw)) return raw;

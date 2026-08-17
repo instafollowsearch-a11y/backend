@@ -132,11 +132,7 @@ const parseActivityRange = (query = {}) => {
   };
 };
 
-const ipToString = (value) => {
-  if (value == null || value === '') return null;
-  if (typeof value === 'string') return value;
-  return String(value);
-};
+const ipToString = (value) => sanitizeClientIp(value) || null;
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -762,7 +758,7 @@ export const listActivityPeople = async (req, res) => {
         visitCount: Number(row.visit_count || 0),
         searchCount: Number(row.search_count || 0),
         ipCount: Number(row.ip_count || 0),
-        clientIp: row.client_ip || null,
+        clientIp: ipToString(row.client_ip),
         userAgent: row.user_agent || null,
         requestOrigin: row.request_origin || null,
         country: row.country || null,
