@@ -12,7 +12,7 @@
         .spark span { flex: 1; min-width: 4px; background: #93c5fd; border-radius: 2px 2px 0 0; }
         .bar-track { height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; }
         .bar-fill { height: 100%; background: linear-gradient(90deg, #2563eb, #0ea5e9); }
-        #userDrawer .section-title { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: #6b7280; font-weight: 600; }
+        #userDrawer .section-title, #personDrawer .section-title { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: #6b7280; font-weight: 600; }
     </style>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800">
@@ -69,6 +69,7 @@
                 <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="users">Users</button>
                 <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="subscriptions">Access</button>
                 <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="activity">Activity</button>
+                <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="people">People</button>
                 <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="searches">Searches</button>
                 <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="audits">Audit log</button>
             </nav>
@@ -213,6 +214,10 @@
                             </div>
                             <button type="button" id="activityRangeApply" class="px-4 py-2 bg-blue-600 text-white rounded-xl">Apply</button>
                         </div>
+                        <label class="flex items-center gap-2 pb-2 text-sm text-slate-600">
+                            <input id="activityIncludeBots" type="checkbox" class="rounded border-slate-300">
+                            Include API / bots
+                        </label>
                     </div>
                 </div>
                 <p id="activityRangeHint" class="text-xs text-slate-500 mb-3"></p>
@@ -238,19 +243,19 @@
                     </div>
                     <div class="bg-white border border-slate-200 rounded-2xl p-5">
                         <h3 class="font-semibold mb-1">Traffic sources</h3>
-                        <p class="text-[11px] text-slate-500 mb-3">Bar = visits. Unique people only appear when we have an id. No UTM/referrer → Direct / unknown.</p>
+                        <p class="text-[11px] text-slate-500 mb-3">Default is people (browsers + searches). API scrapers are hidden unless Include API / bots is on. Bar = unique people when known. IP city is approximate.</p>
                         <div id="activityTrafficSources" class="space-y-2 text-sm"></div>
                     </div>
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
                     <div class="bg-white border border-slate-200 rounded-2xl p-5">
                         <h3 class="font-semibold mb-1">Countries</h3>
-                        <p class="text-[11px] text-slate-500 mb-3">Bar = visits with a known country. Not unique people. Missing geo is omitted, not shown as 0.</p>
+                        <p class="text-[11px] text-slate-500 mb-3">People only by default (includes searches). Bar = unique people. Hosting/VPN IPs can show a city in the host country. Missing geo is omitted.</p>
                         <div id="activityVisitorCountries" class="space-y-2 text-sm"></div>
                     </div>
                     <div class="bg-white border border-slate-200 rounded-2xl p-5">
                         <h3 class="font-semibold mb-1">Cities</h3>
-                        <p class="text-[11px] text-slate-500 mb-3">Bar = visits with a known city. Not unique people.</p>
+                        <p class="text-[11px] text-slate-500 mb-3">People only by default. Bar = unique people. Approximate from IP.</p>
                         <div id="activityVisitorCities" class="space-y-2 text-sm"></div>
                     </div>
                 </div>
@@ -274,13 +279,52 @@
                 </div>
             </section>
 
+            <!-- People -->
+            <section id="peopleTab" class="tab-content" style="display:none;">
+                <div class="flex flex-wrap gap-3 items-end justify-between mb-4">
+                    <div>
+                        <h2 id="peopleTitle" class="font-semibold text-lg">People</h2>
+                        <p id="peopleHint" class="text-sm text-slate-500">Anonymous visitors included. Click a row for IP, UA, and events.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2 items-end">
+                        <input id="peopleSearch" type="search" placeholder="Search IP, anon id, UA…"
+                            class="px-3 py-2 border border-slate-300 rounded-xl min-w-[220px]">
+                        <button type="button" id="peopleSearchBtn" class="px-4 py-2 bg-blue-600 text-white rounded-xl">Search</button>
+                        <button type="button" id="peopleBackActivity" class="px-4 py-2 border border-slate-300 rounded-xl">Back to activity</button>
+                    </div>
+                </div>
+                <div class="bg-white border border-slate-200 rounded-2xl p-5">
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-sm">
+                            <thead class="bg-slate-50 text-slate-500 uppercase text-xs">
+                                <tr>
+                                    <th class="px-3 py-3 text-left">Person</th>
+                                    <th class="px-3 py-3 text-left">IP</th>
+                                    <th class="px-3 py-3 text-left">Location</th>
+                                    <th class="px-3 py-3 text-left">Kind</th>
+                                    <th class="px-3 py-3 text-left">Events</th>
+                                    <th class="px-3 py-3 text-left">Last seen</th>
+                                    <th class="px-3 py-3 text-left"></th>
+                                </tr>
+                            </thead>
+                            <tbody id="peopleTableBody" class="divide-y divide-slate-100"></tbody>
+                        </table>
+                    </div>
+                    <div id="peoplePagination" class="mt-4 flex justify-center"></div>
+                </div>
+            </section>
+
             <!-- Searches -->
             <section id="searchesTab" class="tab-content" style="display:none;">
                 <div class="bg-white border border-slate-200 rounded-2xl p-5">
                     <div class="flex flex-col sm:flex-row gap-3 mb-4">
-                        <input id="searchHistoryQuery" type="search" name="search_history_q" autocomplete="off"
+                        <input id="searchHistoryQuery" type="text" inputmode="search"
+                            name="instagram_target_filter" value=""
+                            autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                            data-lpignore="true" data-1p-ignore="true" data-form-type="other"
                             placeholder="Filter by Instagram username…"
-                            class="flex-1 px-3 py-2 border border-slate-300 rounded-xl">
+                            class="flex-1 px-3 py-2 border border-slate-300 rounded-xl"
+                            readonly>
                         <button type="button" id="searchHistoryBtn" class="px-4 py-2 bg-blue-600 text-white rounded-xl">Filter</button>
                         <button type="button" id="searchHistoryClear" class="px-4 py-2 border border-slate-300 rounded-xl text-slate-700">Clear</button>
                     </div>
@@ -340,6 +384,21 @@
                 </div>
             </section>
         </main>
+    </div>
+
+    <!-- Person drawer (anonymous + registered visitors) -->
+    <div id="personDrawer" class="fixed inset-0 z-50" style="display:none;">
+        <div class="absolute inset-0 bg-slate-900/50" id="personDrawerBackdrop"></div>
+        <aside class="absolute right-0 top-0 h-full w-full max-w-2xl bg-white shadow-2xl overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b border-slate-200 px-5 py-4 flex justify-between items-center">
+                <div>
+                    <h3 class="text-lg font-semibold">Visitor details</h3>
+                    <p class="text-xs text-slate-500">IP, device, geo, and every stored event</p>
+                </div>
+                <button type="button" id="closePersonDrawer" class="text-2xl text-slate-400 hover:text-slate-700" aria-label="Close">&times;</button>
+            </div>
+            <div id="personDrawerBody" class="p-5 space-y-5 text-sm">Loading…</div>
+        </aside>
     </div>
 
     <!-- User drawer -->
@@ -493,6 +552,6 @@
         </div>
     </div>
 
-    <script src="/admin.js?v=20260816e"></script>
+    <script src="/admin.js?v=20260817c"></script>
 </body>
 </html>

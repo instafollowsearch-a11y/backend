@@ -161,6 +161,12 @@ out/
 # Local development
 .local
 
+# MaxMind GeoLite2 database (downloaded via npm run geolite2)
+data/*.mmdb
+data/*.tar.gz
+
+# Storybook build outputs
+
 # Storybook build outputs
 storybook-static
 

@@ -1,4 +1,13 @@
 import rateLimit from 'express-rate-limit';
+import { getClientIp } from '../services/geoLookup.js';
+
+const ipKey = (req) => getClientIp(req) || req.ip || 'unknown';
+const ipKeyOpts = {
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { xForwardedForHeader: false, keyGeneratorIpFallback: false },
+  keyGenerator: ipKey,
+};
 
 /** Login / register — tight limit */
 export const authLimiter = rateLimit({
@@ -22,8 +31,7 @@ export const searchLimiter = rateLimit({
     error: 'Too many search requests. Please try again in a few minutes.',
     retryAfter: 15 * 60,
   },
-  standardHeaders: true,
-  legacyHeaders: false,
+  ...ipKeyOpts,
 });
 
 /**
@@ -40,4 +48,16 @@ export const expensiveLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+});
+
+/** Public image proxy — cap bandwidth abuse */
+export const proxyImageLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  message: {
+    success: false,
+    error: 'Too many image requests. Please try again in a few minutes.',
+    retryAfter: 15 * 60,
+  },
+  ...ipKeyOpts,
 });

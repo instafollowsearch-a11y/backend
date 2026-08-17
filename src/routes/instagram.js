@@ -18,8 +18,12 @@ import {
   getMediaComments
 } from '../controllers/instagramController.js';
 import { protect, authorize, optionalAuth, requireActiveSubscription } from '../middleware/auth.js';
-import { storyViewerLimiter } from '../middleware/storyViewerLimiter.js';
-import { searchLimiter, expensiveLimiter } from '../middleware/rateLimiters.js';
+import { storyViewerProtection } from '../middleware/storyViewerLimiter.js';
+import { searchLimiter, expensiveLimiter, proxyImageLimiter } from '../middleware/rateLimiters.js';
+import {
+  assertAllowedMediaRedirect,
+  parseAllowedInstagramMediaUrl,
+} from '../services/instagramMediaUrl.js';
 import axios from 'axios'; // Added axios import
 
 const router = express.Router();
@@ -72,7 +76,7 @@ const sharedActivityValidation = [
 router.post('/search', searchLimiter, optionalAuth, searchValidation, searchRecent);
 
 // Check if username exists and get basic info
-router.get('/check/:username', usernameValidation, checkUsername);
+router.get('/check/:username', searchLimiter, usernameValidation, checkUsername);
 
 // Get user's search history (authenticated users only)
 router.get('/history', protect, getSearchHistory);
@@ -119,7 +123,7 @@ router.post(
 );
 router.post(
   '/story-viewer',
-  storyViewerLimiter,
+  ...storyViewerProtection,
   optionalAuth,
   storyViewerValidation,
   getStoryViewer
@@ -138,7 +142,7 @@ router.post(
 );
 
 // Proxy route for Instagram images
-router.get('/proxy-image', async (req, res) => {
+router.get('/proxy-image', proxyImageLimiter, async (req, res) => {
   try {
     const { url } = req.query;
     
@@ -146,10 +150,11 @@ router.get('/proxy-image', async (req, res) => {
       return res.status(400).json({ error: 'URL parameter is required' });
     }
 
-    // Validate that it's an Instagram URL
-    if (!url.includes('instagram.com') && !url.includes('cdninstagram.com')) {
-      return res.status(400).json({ error: 'Only Instagram URLs are allowed' });
+    const mediaUrl = parseAllowedInstagramMediaUrl(url);
+    if (!mediaUrl) {
+      return res.status(400).json({ error: 'Only Instagram CDN URLs are allowed' });
     }
+    const safeUrl = mediaUrl.href;
 
     // Try multiple approaches to bypass Instagram's blocking
     const approaches = [
@@ -198,11 +203,12 @@ router.get('/proxy-image', async (req, res) => {
     for (let i = 0; i < approaches.length; i++) {
       try {
         
-        response = await axios.get(url, {
+        response = await axios.get(safeUrl, {
           responseType: 'stream',
           headers: approaches[i].headers,
           timeout: 15000,
           maxRedirects: 5,
+          beforeRedirect: assertAllowedMediaRedirect,
           validateStatus: (status) => status < 500 // Accept 4xx but retry on 5xx
         });
 
@@ -285,14 +291,15 @@ router.get('/download-story', async (req, res) => {
       return res.status(400).json({ error: 'URL parameter is required' });
     }
 
-    // Validate that it's an Instagram URL
-    if (!url.includes('instagram.com') && !url.includes('cdninstagram.com')) {
-      return res.status(400).json({ error: 'Only Instagram URLs are allowed' });
+    const mediaUrl = parseAllowedInstagramMediaUrl(url);
+    if (!mediaUrl) {
+      return res.status(400).json({ error: 'Only Instagram CDN URLs are allowed' });
     }
+    const safeUrl = mediaUrl.href;
 
-    console.log(`Downloading story from: ${url}`);
+    console.log(`Downloading story from: ${safeUrl}`);
 
-    const response = await axios.get(url, {
+    const response = await axios.get(safeUrl, {
       responseType: 'stream',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -310,6 +317,7 @@ router.get('/download-story', async (req, res) => {
       },
       timeout: 60000,
       maxRedirects: 5,
+      beforeRedirect: assertAllowedMediaRedirect,
       validateStatus: function (status) {
         return status >= 200 && status < 400; // Accept redirects
       }

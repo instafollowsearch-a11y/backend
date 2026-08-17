@@ -16,6 +16,8 @@ import {
   getActivitySummary,
   getUserActivityTimeline,
   getRecentEvents,
+  listActivityPeople,
+  getActivityPerson,
 } from '../controllers/adminActivityController.js';
 
 const router = express.Router();
@@ -55,6 +57,8 @@ router.get('/audits', getAuditLogs);
 // First-party activity dashboard
 router.get('/activity/summary', getActivitySummary);
 router.get('/activity/events', getRecentEvents);
+router.get('/activity/people', listActivityPeople);
+router.get('/activity/people/:kind/:id', getActivityPerson);
 router.get('/activity/users/:userId', getUserActivityTimeline);
 
 export default router; 

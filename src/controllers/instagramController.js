@@ -9,7 +9,7 @@ import {
 } from '../services/utils/storyViewerCache.js';
 import { getPostComentsWithCap, getPostLikers, getUserInfo } from '../services/utils/hikerHelperFunctions.js';
 import { emitAnalyticsEvent } from '../services/productAnalyticsService.js';
-import { getClientIp } from '../services/geoLookup.js';
+import { getClientIp, getCfCountry } from '../services/geoLookup.js';
 
 // Search for recent followers/following - RANDOM DATA for motivation
 export const searchRecent = async (req, res, next) => {
@@ -599,8 +599,11 @@ export const getStoryViewer = async (req, res, next) => {
         utmSource: req.body?.utmSource || req.body?.utm_source || null,
         utmMedium: req.body?.utmMedium || req.body?.utm_medium || null,
         utmCampaign: req.body?.utmCampaign || req.body?.utm_campaign || null,
-        referrer: req.body?.referrer || null,
+        referrer: req.body?.referrer || req.headers.referer || null,
         clientIp: getClientIp(req),
+        userAgent: req.headers['user-agent'] || null,
+        origin: req.headers.origin || req.headers.referer || null,
+        cfCountry: getCfCountry(req),
         props: { username: normalized },
       });
     };

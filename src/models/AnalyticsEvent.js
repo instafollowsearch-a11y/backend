@@ -59,6 +59,21 @@ const AnalyticsEvent = sequelize.define(
       type: DataTypes.STRING(128),
       allowNull: true,
     },
+    clientIp: {
+      type: DataTypes.INET,
+      allowNull: true,
+      field: 'client_ip',
+    },
+    userAgent: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'user_agent',
+    },
+    requestOrigin: {
+      type: DataTypes.STRING(512),
+      allowNull: true,
+      field: 'request_origin',
+    },
     ts: {
       type: DataTypes.DATE,
       allowNull: false,
@@ -75,6 +90,8 @@ const AnalyticsEvent = sequelize.define(
       { fields: ['user_id'] },
       { fields: ['path'] },
       { fields: ['country'] },
+      { fields: ['anon_id'] },
+      { fields: ['client_ip'] },
     ],
   }
 );

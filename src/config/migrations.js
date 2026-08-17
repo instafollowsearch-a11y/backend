@@ -252,6 +252,21 @@ const migrations = [
         CREATE INDEX IF NOT EXISTS analytics_events_country_idx ON analytics_events (country);
       `);
     }
+  },
+  {
+    name: '014_analytics_events_client_ip',
+    up: async () => {
+      await sequelize.query(`
+        ALTER TABLE analytics_events
+          ADD COLUMN IF NOT EXISTS client_ip INET NULL;
+        ALTER TABLE analytics_events
+          ADD COLUMN IF NOT EXISTS user_agent TEXT NULL;
+        ALTER TABLE analytics_events
+          ADD COLUMN IF NOT EXISTS request_origin VARCHAR(512) NULL;
+        CREATE INDEX IF NOT EXISTS analytics_events_anon_id_idx ON analytics_events (anon_id);
+        CREATE INDEX IF NOT EXISTS analytics_events_client_ip_idx ON analytics_events (client_ip);
+      `);
+    }
   }
 ];
 

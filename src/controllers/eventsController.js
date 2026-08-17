@@ -1,5 +1,5 @@
 import { ingestAnalyticsEvents } from '../services/productAnalyticsService.js';
-import { getClientIp } from '../services/geoLookup.js';
+import { getClientIp, getCfCountry } from '../services/geoLookup.js';
 
 const MAX_BATCH = 25;
 
@@ -24,6 +24,9 @@ export const postEvents = async (req, res) => {
     const count = await ingestAnalyticsEvents(events, {
       userId,
       clientIp: getClientIp(req),
+      userAgent: req.headers['user-agent'] || null,
+      origin: req.headers.origin || req.headers.referer || null,
+      cfCountry: getCfCountry(req),
     });
     return res.json({ success: true, ingested: count });
   } catch (error) {

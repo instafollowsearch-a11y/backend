@@ -1,9 +1,10 @@
-import { Op, fn, col, literal } from 'sequelize';
+import { Op, fn, col, literal, QueryTypes } from 'sequelize';
 import AnalyticsEvent from '../models/AnalyticsEvent.js';
 import SearchHistory from '../models/SearchHistory.js';
 import User from '../models/User.js';
 import Subscription from '../models/Subscription.js';
 import AdminAuditLog from '../models/AdminAuditLog.js';
+import { sequelize } from '../config/database.js';
 import { countActiveSubscriptions } from '../services/localSubscriptionService.js';
 import { resolveEventSiteMeta } from '../services/productAnalyticsService.js';
 import { trafficSourceSql } from '../services/trafficSource.js';
@@ -11,6 +12,26 @@ import { trafficSourceSql } from '../services/trafficSource.js';
 const SEARCH_EVENTS = ['search', 'story_viewer_search'];
 /** Landing + story loads — what the client sees as “pages / visits”. */
 const VISIT_EVENTS = ['page_view', 'story_viewer'];
+const LOCATION_EVENTS_ALL = [
+  'page_view',
+  'search',
+  'story_viewer_search',
+  'story_viewer',
+];
+
+const parseIncludeBots = (query = {}) => {
+  const raw = String(query.includeBots || query.bots || '').toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'all';
+};
+
+const peopleVisitSql = (includeBots) => {
+  const listed = LOCATION_EVENTS_ALL.map((e) => `'${e}'`).join(',');
+  if (includeBots) return `event IN (${listed})`;
+  return `(
+    event IN ('page_view','search','story_viewer_search')
+    OR (event = 'story_viewer' AND COALESCE(props->>'clientKind','') = 'browser')
+  )`;
+};
 
 const daysAgo = (n) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
 
@@ -123,6 +144,9 @@ const decorateEvent = (row) => {
   });
   return {
     ...plain,
+    clientIp: plain.clientIp || plain.client_ip || props.clientIp || null,
+    userAgent: plain.userAgent || plain.user_agent || props.ua || null,
+    requestOrigin: plain.requestOrigin || plain.request_origin || props.origin || null,
     site: meta.site,
     siteKey: meta.siteKey,
     url: meta.url,
@@ -169,6 +193,11 @@ export const getActivitySummary = async (req, res) => {
       return res.status(400).json({ success: false, message: range.error });
     }
     const { tsWhere, rangeDays, rangeLabel, from, to, mode } = range;
+    const includeBots = parseIncludeBots(req.query);
+    const locationWhere = {
+      ts: tsWhere,
+      [Op.and]: [literal(peopleVisitSql(includeBots))],
+    };
     const since1 = daysAgo(1);
     const since30 = daysAgo(30);
 
@@ -263,7 +292,7 @@ export const getActivitySummary = async (req, res) => {
           [fn('COUNT', col('id')), 'pageViews'],
           [fn('COUNT', literal("DISTINCT COALESCE(user_id::text, anon_id)")), 'visitors'],
         ],
-        where: visitWhere,
+        where: locationWhere,
         group: [sourceExpr],
         order: [[literal('visitors'), 'DESC']],
         limit: 20,
@@ -276,7 +305,7 @@ export const getActivitySummary = async (req, res) => {
           [fn('COUNT', literal("DISTINCT COALESCE(user_id::text, anon_id)")), 'visitors'],
         ],
         where: {
-          ...visitWhere,
+          ...locationWhere,
           country: { [Op.ne]: null },
         },
         group: ['country'],
@@ -293,7 +322,7 @@ export const getActivitySummary = async (req, res) => {
           [fn('COUNT', literal("DISTINCT COALESCE(user_id::text, anon_id)")), 'visitors'],
         ],
         where: {
-          ...visitWhere,
+          ...locationWhere,
           city: { [Op.ne]: null },
         },
         group: ['city', 'region', 'country'],
@@ -382,6 +411,7 @@ export const getActivitySummary = async (req, res) => {
         rangeMode: mode,
         rangeDays,
         rangeLabel,
+        includeBots,
         rangeFrom: from.toISOString(),
         rangeTo: to.toISOString(),
         dau,
@@ -435,25 +465,38 @@ export const getActivitySummary = async (req, res) => {
           username: r.targetUsername,
           count: Number(r.count),
         })),
-        trafficSources: trafficSourcesRaw.map((r) => ({
-          source: r.source || 'Direct / unknown',
-          visitors: Number(r.visitors),
-          pageViews: Number(r.pageViews),
-          count: Number(r.pageViews) || Number(r.visitors),
-        })),
-        visitorCountries: visitorCountriesRaw.map((r) => ({
-          source: r.country,
-          visitors: Number(r.visitors),
-          pageViews: Number(r.pageViews),
-          count: Number(r.pageViews) || Number(r.visitors),
-        })),
+        trafficSources: trafficSourcesRaw.map((r) => {
+          const pageViews = Number(r.pageViews);
+          const visitors = Number(r.visitors);
+          return {
+            source: r.source || 'Direct / unknown',
+            visitors,
+            pageViews,
+            count: includeBots ? pageViews || visitors : visitors || pageViews,
+          };
+        }),
+        visitorCountries: visitorCountriesRaw.map((r) => {
+          const pageViews = Number(r.pageViews);
+          const visitors = Number(r.visitors);
+          return {
+            source: r.country,
+            country: r.country,
+            visitors,
+            pageViews,
+            count: includeBots ? pageViews || visitors : visitors || pageViews,
+          };
+        }),
         visitorCities: visitorCitiesRaw.map((r) => {
           const label = [r.city, r.region, r.country].filter(Boolean).join(', ');
+          const pageViews = Number(r.pageViews);
+          const visitors = Number(r.visitors);
           return {
             source: label,
-            visitors: Number(r.visitors),
-            pageViews: Number(r.pageViews),
-            count: Number(r.pageViews) || Number(r.visitors),
+            city: r.city,
+            country: r.country,
+            visitors,
+            pageViews,
+            count: includeBots ? pageViews || visitors : visitors || pageViews,
           };
         }),
         recentEvents: recentEvents.map(decorateEvent),
@@ -532,6 +575,288 @@ export const getUserActivityTimeline = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to load user activity',
+    });
+  }
+};
+
+const personScopeSql = (scope, includeBots) => {
+  if (scope === 'searches') return `event IN ('search','story_viewer_search')`;
+  if (scope === 'visits') return peopleVisitSql(includeBots);
+  return 'TRUE';
+};
+
+const extraPeopleFiltersSql = ({ country, city, q }) => {
+  const parts = [];
+  if (country) parts.push('AND country = :country');
+  if (city) parts.push('AND city = :city');
+  if (q) {
+    parts.push(`AND (
+      COALESCE(user_id::text, '') ILIKE :qLike
+      OR COALESCE(anon_id, '') ILIKE :qLike
+      OR COALESCE(client_ip::text, '') ILIKE :qLike
+      OR COALESCE(user_agent, '') ILIKE :qLike
+    )`);
+  }
+  return parts.join('\n');
+};
+
+/**
+ * GET /api/admin/activity/people
+ */
+export const listActivityPeople = async (req, res) => {
+  try {
+    const range = parseActivityRange(req.query);
+    if (range.error) {
+      return res.status(400).json({ success: false, message: range.error });
+    }
+    const includeBots = parseIncludeBots(req.query);
+    const scopeRaw = String(req.query.scope || 'all').toLowerCase();
+    const scope = ['all', 'visits', 'searches'].includes(scopeRaw)
+      ? scopeRaw
+      : 'all';
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+    const offset = (page - 1) * limit;
+    const country = String(req.query.country || '').trim() || null;
+    const city = String(req.query.city || '').trim() || null;
+    const q = String(req.query.q || req.query.search || '').trim() || null;
+    const scopeSql = personScopeSql(scope, includeBots);
+    const extraSql = extraPeopleFiltersSql({ country, city, q });
+    const replacements = {
+      from: range.from,
+      to: range.to,
+      limit,
+      offset,
+      country,
+      city,
+      qLike: q ? `%${q}%` : null,
+    };
+    const whereSql = `
+      ts >= :from AND ts <= :to
+      AND COALESCE(user_id::text, anon_id) IS NOT NULL
+      AND (${scopeSql})
+      ${extraSql}
+    `;
+    const [countRows, peopleRows] = await Promise.all([
+      sequelize.query(
+        `SELECT COUNT(*)::int AS cnt FROM (
+           SELECT DISTINCT COALESCE(user_id::text, anon_id) AS person_key
+           FROM analytics_events
+           WHERE ${whereSql}
+         ) t`,
+        { replacements, type: QueryTypes.SELECT }
+      ),
+      sequelize.query(
+        `WITH actors AS (
+           SELECT
+             COALESCE(user_id::text, anon_id) AS person_key,
+             MAX(user_id::text) AS user_id,
+             MAX(anon_id) AS anon_id,
+             COUNT(*)::int AS event_count,
+             COUNT(*) FILTER (WHERE event IN ('page_view','story_viewer'))::int AS visit_count,
+             COUNT(*) FILTER (WHERE event IN ('search','story_viewer_search'))::int AS search_count,
+             MIN(ts) AS first_seen,
+             MAX(ts) AS last_seen,
+             COUNT(DISTINCT client_ip::text) FILTER (WHERE client_ip IS NOT NULL)::int AS ip_count
+           FROM analytics_events
+           WHERE ${whereSql}
+           GROUP BY 1
+         ),
+         latest AS (
+           SELECT DISTINCT ON (COALESCE(user_id::text, anon_id))
+             COALESCE(user_id::text, anon_id) AS person_key,
+             client_ip::text AS client_ip,
+             user_agent,
+             request_origin,
+             country,
+             region,
+             city,
+             props->>'clientKind' AS client_kind,
+             props->>'isBot' AS is_bot,
+             event AS last_event
+           FROM analytics_events
+           WHERE ${whereSql}
+           ORDER BY COALESCE(user_id::text, anon_id), ts DESC
+         )
+         SELECT a.*, l.client_ip, l.user_agent, l.request_origin, l.country, l.region, l.city,
+                l.client_kind, l.is_bot, l.last_event
+         FROM actors a
+         JOIN latest l ON l.person_key = a.person_key
+         ORDER BY a.last_seen DESC
+         LIMIT :limit OFFSET :offset`,
+        { replacements, type: QueryTypes.SELECT }
+      ),
+    ]);
+    const total = Number(countRows?.[0]?.cnt || 0);
+    const userIds = [
+      ...new Set(peopleRows.map((r) => r.user_id).filter(Boolean)),
+    ];
+    const users = userIds.length
+      ? await User.findAll({
+          where: { id: { [Op.in]: userIds } },
+          attributes: ['id', 'username', 'email', 'role', 'createdAt', 'lastLogin'],
+        })
+      : [];
+    const userMap = Object.fromEntries(users.map((u) => [u.id, u.toJSON()]));
+    const people = peopleRows.map((row) => {
+      const userId = row.user_id || null;
+      const anonId = row.anon_id || null;
+      const kind = userId ? 'user' : 'anon';
+      return {
+        kind,
+        personKey: userId ? `u/${userId}` : `a/${anonId}`,
+        userId,
+        anonId,
+        account: userId ? userMap[userId] || null : null,
+        eventCount: Number(row.event_count || 0),
+        visitCount: Number(row.visit_count || 0),
+        searchCount: Number(row.search_count || 0),
+        ipCount: Number(row.ip_count || 0),
+        clientIp: row.client_ip || null,
+        userAgent: row.user_agent || null,
+        requestOrigin: row.request_origin || null,
+        country: row.country || null,
+        region: row.region || null,
+        city: row.city || null,
+        clientKind: row.client_kind || null,
+        isBot: row.is_bot === 'true' || row.is_bot === true,
+        lastEvent: row.last_event || null,
+        firstSeen: row.first_seen,
+        lastSeen: row.last_seen,
+      };
+    });
+    return res.json({
+      success: true,
+      data: {
+        people,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.max(1, Math.ceil(total / limit)),
+          totalItems: total,
+          itemsPerPage: limit,
+        },
+        rangeLabel: range.rangeLabel,
+        rangeFrom: range.from.toISOString(),
+        rangeTo: range.to.toISOString(),
+        includeBots,
+        scope,
+        country,
+        city,
+        q,
+      },
+    });
+  } catch (error) {
+    console.error('listActivityPeople error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to load people',
+    });
+  }
+};
+
+/**
+ * GET /api/admin/activity/people/:kind/:id
+ * kind = u (registered user) | a (anonymous)
+ */
+export const getActivityPerson = async (req, res) => {
+  try {
+    const kind = String(req.params.kind || '').toLowerCase();
+    const id = decodeURIComponent(String(req.params.id || '').trim());
+    if (!id || !['u', 'a', 'user', 'anon'].includes(kind)) {
+      return res.status(400).json({ success: false, message: 'Invalid person id' });
+    }
+    const isUser = kind === 'u' || kind === 'user';
+    const where = isUser
+      ? { userId: id }
+      : { userId: null, anonId: id };
+    const events = await AnalyticsEvent.findAll({
+      where,
+      order: [['ts', 'DESC']],
+      limit: 250,
+    });
+    if (!events.length) {
+      return res.status(404).json({ success: false, message: 'No events for this person' });
+    }
+    const decorated = events.map(decorateEvent);
+    const ips = [
+      ...new Set(
+        decorated
+          .map((e) => e.clientIp || e.props?.clientIp)
+          .filter(Boolean)
+          .map(String)
+      ),
+    ];
+    const userAgents = [
+      ...new Set(decorated.map((e) => e.userAgent).filter(Boolean)),
+    ];
+    const origins = [
+      ...new Set(decorated.map((e) => e.requestOrigin).filter(Boolean)),
+    ];
+    const eventCounts = {};
+    decorated.forEach((e) => {
+      eventCounts[e.event] = (eventCounts[e.event] || 0) + 1;
+    });
+    let account = null;
+    if (isUser) {
+      account = await User.findByPk(id, {
+        attributes: { exclude: ['password', 'passwordHash'] },
+      });
+    }
+    const searchWhere = isUser
+      ? { [Op.or]: [{ userId: id }, ...(ips.length ? [{ ipAddress: { [Op.in]: ips } }] : [])] }
+      : ips.length
+        ? { ipAddress: { [Op.in]: ips } }
+        : null;
+    const searches = searchWhere
+      ? await SearchHistory.findAll({
+            where: searchWhere,
+            order: [['createdAt', 'DESC']],
+            limit: 50,
+            attributes: [
+              'id',
+              'targetUsername',
+              'searchType',
+              'ipAddress',
+              'userAgent',
+              'status',
+              'createdAt',
+              'userId',
+            ],
+          })
+      : [];
+    const latest = decorated[0];
+    return res.json({
+      success: true,
+      data: {
+        kind: isUser ? 'user' : 'anon',
+        personKey: isUser ? `u/${id}` : `a/${id}`,
+        userId: isUser ? id : null,
+        anonId: isUser ? latest.anonId || null : id,
+        account: account ? account.toJSON() : null,
+        firstSeen: decorated[decorated.length - 1]?.ts,
+        lastSeen: latest.ts,
+        country: latest.country,
+        region: latest.region,
+        city: latest.city,
+        clientKind: latest.props?.clientKind || null,
+        isBot: Boolean(latest.props?.isBot),
+        ips,
+        userAgents,
+        origins,
+        eventCounts,
+        events: decorated,
+        searches,
+        note:
+          ips.length === 0
+            ? 'Raw IP was not stored on older events. New visits record IP for this admin view.'
+            : null,
+      },
+    });
+  } catch (error) {
+    console.error('getActivityPerson error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to load person',
     });
   }
 };

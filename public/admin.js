@@ -1,6 +1,8 @@
 let currentToken = localStorage.getItem('adminToken') || '';
 let currentUserId = null;
 let activityCache = null;
+let peopleListQs = '';
+let peopleListTitle = 'People';
 
 const $ = (id) => document.getElementById(id);
 
@@ -67,12 +69,16 @@ function badge(text, tone = 'slate') {
   return `<span class="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${tones[tone] || tones.slate}">${escapeHtml(text)}</span>`;
 }
 
-function kpiCard(label, value, hint = '') {
+function kpiCard(label, value, hint = '', action = null) {
+  const link = action
+    ? `<button type="button" class="mt-2 text-xs font-semibold text-indigo-600 hover:underline js-open-people" data-people-extra="${escapeHtml(JSON.stringify(action.extra || {}))}" data-people-title="${escapeHtml(action.title || 'People')}">View people</button>`
+    : '';
   return `
     <div class="bg-white border border-slate-200 rounded-2xl p-4">
       <p class="text-xs uppercase tracking-wide text-slate-500">${escapeHtml(label)}</p>
       <p class="text-2xl font-bold text-slate-900 mt-1">${escapeHtml(String(value ?? 0))}</p>
       ${hint ? `<p class="text-xs text-slate-400 mt-1">${escapeHtml(hint)}</p>` : ''}
+      ${link}
     </div>`;
 }
 
@@ -84,7 +90,7 @@ function uniqueVsVolumeHint(unique, volume, volumeWord, whenIdentified) {
 }
 
 function compactEventProps(props = {}) {
-  const skip = new Set(['site', 'siteLabel', 'siteUrl', 'referrerHost']);
+  const skip = new Set(['site', 'siteLabel', 'siteUrl', 'referrerHost', 'ua']);
   const out = {};
   Object.entries(props).forEach(([key, value]) => {
     if (skip.has(key) || value == null || value === '') return;
@@ -116,19 +122,27 @@ function barRows(items, labelKey, countKey = 'count') {
         ? `<div class="text-[11px] text-indigo-600 truncate" title="${escapeHtml(item.url)}">${escapeHtml(item.url)}</div>`
         : '';
       const unique = Number(item.visitors);
-      const unit = item.pageViews != null ? ' visits' : '';
-      const extra =
-        Number.isFinite(unique) && unique > 0
-          ? `<div class="text-[11px] text-slate-500">${escapeHtml(String(unique))} unique people</div>`
+      const visits = Number(item.pageViews);
+      const extraBits = [];
+      if (Number.isFinite(visits) && visits > 0) extraBits.push(`${visits} visits`);
+      if (Number.isFinite(unique) && unique > 0 && unique !== count) {
+        extraBits.push(`${unique} unique people`);
+      }
+      const extra = extraBits.length
+        ? `<div class="text-[11px] text-slate-500">${escapeHtml(extraBits.join(' · '))}</div>`
+        : '';
+      const geoLink =
+        item.country || item.city
+          ? `<button type="button" class="text-[11px] font-medium text-indigo-600 hover:underline js-people-geo" data-country="${escapeHtml(item.country || '')}" data-city="${escapeHtml(item.city || '')}">View people</button>`
           : '';
       return `
         <div>
           <div class="flex justify-between gap-2 mb-1">
             <div class="min-w-0">
               <span class="truncate block">${escapeHtml(label)}</span>
-              ${site}${url}${extra}
+              ${site}${url}${extra}${geoLink}
             </div>
-            <span class="text-slate-500 shrink-0">${count}${unit}</span>
+            <span class="text-slate-500 shrink-0">${count}</span>
           </div>
           <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
         </div>`;
@@ -224,6 +238,7 @@ function switchTab(tabName) {
   else if (tabName === 'users') loadUsers();
   else if (tabName === 'subscriptions') loadSubscriptions();
   else if (tabName === 'activity') loadActivityDashboard();
+  else if (tabName === 'people') loadPeopleList(1);
   else if (tabName === 'searches') loadSearches();
   else if (tabName === 'audits') loadAudits();
 }
@@ -524,15 +539,24 @@ function getActivityRangeQuery() {
   if (mode === 'custom') {
     const from = $('activityFrom')?.value || '';
     const to = $('activityTo')?.value || '';
-    if (!from && !to) return 'hours=24';
+    if (!from && !to) {
+      const fallback = new URLSearchParams();
+      fallback.set('hours', '24');
+      if ($('activityIncludeBots')?.checked) fallback.set('includeBots', '1');
+      return fallback.toString();
+    }
     const params = new URLSearchParams();
     if (from) params.set('from', from);
     if (to) params.set('to', to);
     else if (from) params.set('to', from);
+    if ($('activityIncludeBots')?.checked) params.set('includeBots', '1');
     return params.toString();
   }
-  if (mode === '24h') return 'hours=24';
-  return `days=${encodeURIComponent(mode)}`;
+  const params = new URLSearchParams();
+  if (mode === '24h') params.set('hours', '24');
+  else params.set('days', mode);
+  if ($('activityIncludeBots')?.checked) params.set('includeBots', '1');
+  return params.toString();
 }
 
 // Activity
@@ -553,11 +577,16 @@ async function loadActivityDashboard() {
     activityCache = s;
     if ($('activityRangeHint')) {
       $('activityRangeHint').textContent = s.rangeLabel
-        ? `Showing: ${s.rangeLabel} · Events / funnel / stream use this window. DAU/WAU/MAU stay fixed (1d / 7d / 30d).`
+        ? `Showing: ${s.rangeLabel} · Events / funnel / stream use this window. DAU/WAU/MAU stay fixed (1d / 7d / 30d). Locations/traffic: ${
+            s.includeBots ? 'all visits including API/bots' : 'people only (browsers + searches)'
+          }.`
         : '';
     }
     $('activityKpis').innerHTML = [
-      kpiCard('Visits', s.pageViewsInRange, 'page views + story loads'),
+      kpiCard('Visits', s.pageViewsInRange, 'page views + story loads', {
+        extra: { scope: 'visits' },
+        title: 'People with visits',
+      }),
       kpiCard(
         'Unique visitors',
         s.visitorsInRange,
@@ -566,10 +595,17 @@ async function loadActivityDashboard() {
           s.pageViewsInRange,
           'visits',
           'account, browser, or hashed IP'
-        )
+        ),
+        { extra: { scope: 'all' }, title: 'Unique visitors' }
       ),
-      kpiCard('Events', s.eventsInRange, s.rangeLabel || ''),
-      kpiCard('Searches', s.searchesInRange, s.rangeLabel || ''),
+      kpiCard('Events', s.eventsInRange, s.rangeLabel || '', {
+        extra: { scope: 'all' },
+        title: 'People in this range',
+      }),
+      kpiCard('Searches', s.searchesInRange, s.rangeLabel || '', {
+        extra: { scope: 'searches' },
+        title: 'People who searched',
+      }),
       kpiCard(
         'Unique searchers',
         s.uniqueSearchersInRange,
@@ -578,21 +614,30 @@ async function loadActivityDashboard() {
           s.searchesInRange,
           'searches',
           'people who searched'
-        )
+        ),
+        { extra: { scope: 'searches' }, title: 'Unique searchers' }
       ),
       kpiCard(
         'DAU',
         s.dau,
         s.dau === 0 && (s.rangeLabel === 'Last 24 hours' || s.rangeDays === 1)
           ? uniqueVsVolumeHint(s.dau, s.pageViewsInRange, 'visits in this window', 'identified · last 1 day')
-          : 'identified people · rolling last 1 day'
+          : 'identified people · rolling last 1 day',
+        { extra: { hours: '24', scope: 'all' }, title: 'DAU people' }
       ),
-      kpiCard('WAU', s.wau, 'identified people · rolling last 7 days'),
-      kpiCard('MAU', s.mau, 'identified people · rolling last 30 days'),
+      kpiCard('WAU', s.wau, 'identified people · rolling last 7 days', {
+        extra: { days: '7', scope: 'all' },
+        title: 'WAU people',
+      }),
+      kpiCard('MAU', s.mau, 'identified people · rolling last 30 days', {
+        extra: { days: '30', scope: 'all' },
+        title: 'MAU people',
+      }),
       kpiCard('Paid', s.activePaid, 'active subscriptions now'),
       kpiCard('Upgrades CTA', s.upgradeCtas, s.rangeLabel || ''),
       kpiCard('Checkouts', s.checkoutStarted, s.rangeLabel || ''),
     ].join('');
+    bindPeopleKpiLinks();
     $('activityFunnel').innerHTML = barRows(s.funnel || [], 'step');
     $('activityTopEvents').innerHTML = barRows(s.topEvents || [], 'event');
     $('activityTopPages').innerHTML = barRows(s.topPages || [], 'path');
@@ -606,6 +651,7 @@ async function loadActivityDashboard() {
     if ($('activityVisitorCities')) {
       $('activityVisitorCities').innerHTML = barRows(s.visitorCities || [], 'source');
     }
+    bindPeopleGeoLinks();
 
     const list = events.success ? events.data.events : s.recentEvents || [];
     const shown = list.length;
@@ -630,6 +676,7 @@ async function loadActivityDashboard() {
             <th class="px-3 py-2 text-left">Site</th>
             <th class="px-3 py-2 text-left">URL</th>
             <th class="px-3 py-2 text-left">User / anon</th>
+            <th class="px-3 py-2 text-left">IP</th>
             <th class="px-3 py-2 text-left">Props</th>
           </tr>
         </thead>
@@ -640,6 +687,12 @@ async function loadActivityDashboard() {
                 const url = eventUrl(e);
                 const props = compactEventProps(e.props || {});
                 const who = e.userId || e.user_id || e.anonId || e.anon_id || 'unidentified';
+                const personKind = e.userId || e.user_id ? 'u' : e.anonId || e.anon_id ? 'a' : '';
+                const personId = e.userId || e.user_id || e.anonId || e.anon_id || '';
+                const ip = e.clientIp || e.client_ip || e.props?.clientIp || '';
+                const whoCell = personKind
+                  ? `<button type="button" class="text-indigo-600 hover:underline font-mono text-xs js-open-person" data-kind="${personKind}" data-id="${escapeHtml(personId)}">${escapeHtml(who)}</button>`
+                  : `<span class="font-mono text-xs">${escapeHtml(who)}</span>`;
                 const propsText = Object.keys(props).length ? JSON.stringify(props) : '—';
                 return `
             <tr class="hover:bg-slate-50">
@@ -654,15 +707,17 @@ async function loadActivityDashboard() {
                     : escapeHtml(e.path || '—')
                 }
               </td>
-              <td class="px-3 py-2 font-mono text-xs">${escapeHtml(who)}</td>
+              <td class="px-3 py-2">${whoCell}</td>
+              <td class="px-3 py-2 font-mono text-xs">${escapeHtml(ip || '—')}</td>
               <td class="px-3 py-2 text-xs text-slate-500 truncate max-w-[200px]">${escapeHtml(propsText)}</td>
             </tr>`;
               })
               .join('') ||
-            '<tr><td colspan="7" class="px-3 py-6 text-slate-400">No events</td></tr>'
+            '<tr><td colspan="8" class="px-3 py-6 text-slate-400">No events</td></tr>'
           }
         </tbody>
       </table>`;
+    bindPersonLinks($('activityEventStream'));
   } catch (err) {
     console.error(err);
     showAlert('Failed to load activity', 'error');
@@ -670,9 +725,23 @@ async function loadActivityDashboard() {
 }
 
 // Searches
+function getSearchHistoryFilter() {
+  const input = $('searchHistoryQuery');
+  if (!input) return '';
+  const q = input.value.trim();
+  if (!q) return '';
+  const login = ($('adminLogin')?.value || 'admin').trim().toLowerCase();
+  const isAutofill = !input.dataset.userTyped;
+  if (isAutofill && q.toLowerCase() === login) {
+    input.value = '';
+    return '';
+  }
+  return q;
+}
+
 async function loadSearches(page = 1) {
   try {
-    const q = $('searchHistoryQuery').value.trim();
+    const q = getSearchHistoryFilter();
     let url = `/api/admin/searches?page=${page}&limit=25`;
     if (q) url += `&search=${encodeURIComponent(q)}`;
     const data = await api(url);
@@ -837,6 +906,239 @@ function closeUserDrawer() {
   $('userDrawer').style.display = 'none';
 }
 
+function bindPeopleKpiLinks() {
+  document.querySelectorAll('.js-open-people').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      let extra = {};
+      try {
+        extra = JSON.parse(btn.dataset.peopleExtra || '{}');
+      } catch {
+        extra = {};
+      }
+      openPeopleList(extra, btn.dataset.peopleTitle || 'People');
+    });
+  });
+}
+
+function bindPeopleGeoLinks() {
+  document.querySelectorAll('.js-people-geo').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const extra = { scope: 'visits' };
+      if (btn.dataset.country) extra.country = btn.dataset.country;
+      if (btn.dataset.city) extra.city = btn.dataset.city;
+      const title = extra.city
+        ? `People in ${extra.city}`
+        : `People in ${extra.country || 'location'}`;
+      openPeopleList(extra, title);
+    });
+  });
+}
+
+function bindPersonLinks(root) {
+  root?.querySelectorAll('.js-open-person').forEach((btn) => {
+    btn.addEventListener('click', () => openPersonDrawer(btn.dataset.kind, btn.dataset.id));
+  });
+}
+
+function openPeopleList(extra = {}, title = 'People') {
+  const params = new URLSearchParams();
+  if (extra.hours || extra.days) {
+    if (extra.hours) params.set('hours', String(extra.hours));
+    if (extra.days) params.set('days', String(extra.days));
+    if ($('activityIncludeBots')?.checked) params.set('includeBots', '1');
+  } else {
+    new URLSearchParams(getActivityRangeQuery()).forEach((value, key) => {
+      params.set(key, value);
+    });
+  }
+  Object.entries(extra).forEach(([key, value]) => {
+    if (key === 'hours' || key === 'days') return;
+    if (value != null && value !== '') params.set(key, String(value));
+  });
+  peopleListQs = params.toString();
+  peopleListTitle = title;
+  switchTab('people');
+}
+
+async function loadPeopleList(page = 1) {
+  try {
+    if (!peopleListQs) {
+      peopleListQs = `${getActivityRangeQuery()}&scope=all`;
+    }
+    const params = new URLSearchParams(peopleListQs);
+    params.set('page', String(page));
+    params.set('limit', '50');
+    const q = $('peopleSearch')?.value?.trim();
+    if (q) params.set('q', q);
+    else params.delete('q');
+    peopleListQs = params.toString();
+    const data = await api(`/api/admin/activity/people?${params.toString()}`);
+    if (!data.success) throw new Error(data.message || 'Failed');
+    if ($('peopleTitle')) $('peopleTitle').textContent = peopleListTitle;
+    if ($('peopleHint')) {
+      const bits = [data.data.rangeLabel, `${data.data.pagination?.totalItems || 0} people`];
+      if (data.data.scope && data.data.scope !== 'all') bits.push(data.data.scope);
+      if (data.data.country) bits.push(data.data.country);
+      if (data.data.city) bits.push(data.data.city);
+      $('peopleHint').textContent = bits.filter(Boolean).join(' · ');
+    }
+    const tbody = $('peopleTableBody');
+    tbody.innerHTML = '';
+    (data.data.people || []).forEach((p) => {
+      const tr = document.createElement('tr');
+      tr.className = 'hover:bg-slate-50';
+      const label = p.account
+        ? `@${p.account.username}`
+        : p.anonId || 'anonymous';
+      const loc = [p.city, p.region, p.country].filter(Boolean).join(', ') || '—';
+      const kind = p.kind === 'user' ? badge('Account', 'indigo') : badge('Anonymous', 'slate');
+      const bot = p.isBot ? ` ${badge('bot/api', 'rose')}` : '';
+      const [kindPart, idPart] = String(p.personKey || '').split('/');
+      tr.innerHTML = `
+        <td class="px-3 py-3">
+          <div class="font-medium">${escapeHtml(label)}</div>
+          <div class="font-mono text-[11px] text-slate-400">${escapeHtml(p.anonId || p.userId || '')}</div>
+        </td>
+        <td class="px-3 py-3 font-mono text-xs">${escapeHtml(p.clientIp || '—')}</td>
+        <td class="px-3 py-3 text-xs">${escapeHtml(loc)}</td>
+        <td class="px-3 py-3">${kind}${bot}</td>
+        <td class="px-3 py-3 text-xs">${p.eventCount} events · ${p.visitCount} visits · ${p.searchCount} searches</td>
+        <td class="px-3 py-3 text-slate-500 whitespace-nowrap">${fmtDate(p.lastSeen)}</td>
+        <td class="px-3 py-3">
+          <button type="button" class="text-indigo-600 hover:underline text-sm js-open-person" data-kind="${escapeHtml(kindPart)}" data-id="${escapeHtml(idPart || '')}">Details</button>
+        </td>`;
+      tbody.appendChild(tr);
+    });
+    if (!(data.data.people || []).length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="px-3 py-6 text-slate-400">No people in this window</td></tr>';
+    }
+    bindPersonLinks(tbody);
+    displayPagination(data.data.pagination, 'peoplePagination', loadPeopleList);
+  } catch (err) {
+    console.error(err);
+    showAlert('Failed to load people', 'error');
+  }
+}
+
+async function openPersonDrawer(kind, id) {
+  const drawer = $('personDrawer');
+  const body = $('personDrawerBody');
+  if (!drawer || !body || !kind || !id) return;
+  drawer.style.display = 'block';
+  body.innerHTML = 'Loading…';
+  try {
+    const data = await api(`/api/admin/activity/people/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`);
+    if (!data.success) {
+      body.innerHTML = `<p class="text-rose-600">${escapeHtml(data.message || 'Failed')}</p>`;
+      return;
+    }
+    const p = data.data;
+    const acc = p.account;
+    const loc = [p.city, p.region, p.country].filter(Boolean).join(', ') || '—';
+    const counts = Object.entries(p.eventCounts || {})
+      .map(([event, count]) => `${event}: ${count}`)
+      .join(' · ');
+    const ipList = (p.ips || []).length
+      ? p.ips.map((ip) => `<li class="font-mono">${escapeHtml(ip)}</li>`).join('')
+      : '<li class="text-slate-400">No raw IP on stored events</li>';
+    const uaList = (p.userAgents || []).length
+      ? p.userAgents.map((ua) => `<li class="break-all">${escapeHtml(ua)}</li>`).join('')
+      : '<li class="text-slate-400">—</li>';
+    const originList = (p.origins || []).length
+      ? p.origins.map((o) => `<li class="break-all">${escapeHtml(o)}</li>`).join('')
+      : '<li class="text-slate-400">—</li>';
+    const eventRows = (p.events || [])
+      .map((e) => {
+        const ip = e.clientIp || e.props?.clientIp || '—';
+        return `<tr class="border-t border-slate-100">
+          <td class="py-2 whitespace-nowrap text-slate-500">${fmtDate(e.ts)}</td>
+          <td class="py-2">${badge(e.event, 'blue')}</td>
+          <td class="py-2 font-mono text-xs">${escapeHtml(ip)}</td>
+          <td class="py-2 text-xs break-all">${escapeHtml(e.path || e.url || '—')}</td>
+          <td class="py-2 text-xs text-slate-500 break-all">${escapeHtml(JSON.stringify(e.props || {}))}</td>
+        </tr>`;
+      })
+      .join('');
+    const searchRows = (p.searches || [])
+      .map(
+        (s) => `<tr class="border-t border-slate-100">
+        <td class="py-2 whitespace-nowrap text-slate-500">${fmtDate(s.createdAt || s.created_at)}</td>
+        <td class="py-2">@${escapeHtml(s.targetUsername || s.target_username || '')}</td>
+        <td class="py-2 font-mono text-xs">${escapeHtml(s.ipAddress || s.ip_address || '—')}</td>
+        <td class="py-2">${escapeHtml(s.status || '—')}</td>
+      </tr>`
+      )
+      .join('');
+    const accountBlock = acc
+      ? `<div>
+          <p class="section-title mb-2">Account</p>
+          <p class="text-lg font-semibold">@${escapeHtml(acc.username)}</p>
+          <p>${escapeHtml(acc.email || '')}</p>
+          <p class="text-xs text-slate-500">id ${escapeHtml(acc.id)}</p>
+          <button type="button" class="mt-2 text-sm text-indigo-600 hover:underline" id="personOpenAccount">Open account controls</button>
+        </div>`
+      : `<div>
+          <p class="section-title mb-2">Identity</p>
+          <p class="font-semibold">Anonymous visitor</p>
+          <p class="font-mono text-xs break-all">${escapeHtml(p.anonId || '')}</p>
+        </div>`;
+    body.innerHTML = `
+      ${accountBlock}
+      ${p.note ? `<p class="text-amber-700 text-xs bg-amber-50 border border-amber-200 rounded-lg p-2">${escapeHtml(p.note)}</p>` : ''}
+      <div>
+        <p class="section-title mb-2">Network</p>
+        <p><span class="text-slate-500">Location</span> ${escapeHtml(loc)}</p>
+        <p><span class="text-slate-500">Client</span> ${escapeHtml(p.clientKind || '—')} ${p.isBot ? badge('bot/api', 'rose') : ''}</p>
+        <p><span class="text-slate-500">First / last</span> ${fmtDate(p.firstSeen)} → ${fmtDate(p.lastSeen)}</p>
+        <p class="mt-2 text-slate-500">IP addresses</p>
+        <ul class="list-disc pl-5 space-y-1">${ipList}</ul>
+        <p class="mt-2 text-slate-500">User agents</p>
+        <ul class="list-disc pl-5 space-y-1">${uaList}</ul>
+        <p class="mt-2 text-slate-500">Origin / referer hosts</p>
+        <ul class="list-disc pl-5 space-y-1">${originList}</ul>
+      </div>
+      <div>
+        <p class="section-title mb-2">Event mix</p>
+        <p>${escapeHtml(counts || '—')}</p>
+      </div>
+      <div>
+        <p class="section-title mb-2">Events</p>
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-xs">
+            <thead class="text-slate-500 uppercase"><tr>
+              <th class="text-left py-1">When</th><th class="text-left py-1">Event</th>
+              <th class="text-left py-1">IP</th><th class="text-left py-1">Path</th><th class="text-left py-1">Props</th>
+            </tr></thead>
+            <tbody>${eventRows || '<tr><td class="py-3 text-slate-400" colspan="5">None</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <p class="section-title mb-2">Related searches</p>
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-xs">
+            <thead class="text-slate-500 uppercase"><tr>
+              <th class="text-left py-1">When</th><th class="text-left py-1">Target</th>
+              <th class="text-left py-1">IP</th><th class="text-left py-1">Status</th>
+            </tr></thead>
+            <tbody>${searchRows || '<tr><td class="py-3 text-slate-400" colspan="4">None</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>`;
+    $('personOpenAccount')?.addEventListener('click', () => {
+      closePersonDrawer();
+      openUserDrawer(acc.id);
+    });
+  } catch (err) {
+    console.error(err);
+    body.innerHTML = `<p class="text-rose-600">${escapeHtml(err.message || 'Failed')}</p>`;
+  }
+}
+
+function closePersonDrawer() {
+  if ($('personDrawer')) $('personDrawer').style.display = 'none';
+}
+
 function closeModal() {
   $('editModal').style.display = 'none';
   $('subscriptionModal').style.display = 'none';
@@ -897,7 +1199,13 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.querySelectorAll('.tab').forEach((tab) => {
-    tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+    tab.addEventListener('click', () => {
+      if (tab.dataset.tab === 'people') {
+        peopleListQs = `${getActivityRangeQuery()}&scope=all`;
+        peopleListTitle = 'People';
+      }
+      switchTab(tab.dataset.tab);
+    });
   });
   document.querySelectorAll('[data-goto]').forEach((btn) => {
     btn.addEventListener('click', () => switchTab(btn.dataset.goto));
@@ -920,13 +1228,31 @@ document.addEventListener('DOMContentLoaded', () => {
     loadActivityDashboard();
   });
   $('eventFilter')?.addEventListener('change', loadActivityDashboard);
+  $('activityIncludeBots')?.addEventListener('change', loadActivityDashboard);
+  $('peopleSearchBtn')?.addEventListener('click', () => loadPeopleList(1));
+  $('peopleSearch')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') loadPeopleList(1);
+  });
+  $('peopleBackActivity')?.addEventListener('click', () => switchTab('activity'));
+  $('closePersonDrawer')?.addEventListener('click', closePersonDrawer);
+  $('personDrawerBackdrop')?.addEventListener('click', closePersonDrawer);
+
   $('searchHistoryBtn')?.addEventListener('click', () => loadSearches(1));
   $('searchHistoryClear')?.addEventListener('click', () => {
-    if ($('searchHistoryQuery')) $('searchHistoryQuery').value = '';
+    if ($('searchHistoryQuery')) {
+      $('searchHistoryQuery').value = '';
+      delete $('searchHistoryQuery').dataset.userTyped;
+    }
     loadSearches(1);
   });
   $('searchHistoryQuery')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') loadSearches(1);
+  });
+  $('searchHistoryQuery')?.addEventListener('focus', () => {
+    $('searchHistoryQuery').removeAttribute('readonly');
+  });
+  $('searchHistoryQuery')?.addEventListener('input', () => {
+    $('searchHistoryQuery').dataset.userTyped = '1';
   });
   $('auditActionFilter')?.addEventListener('change', () => loadAudits(1));
 
