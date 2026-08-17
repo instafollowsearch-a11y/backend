@@ -239,6 +239,7 @@ function switchTab(tabName) {
   else if (tabName === 'subscriptions') loadSubscriptions();
   else if (tabName === 'activity') loadActivityDashboard();
   else if (tabName === 'people') loadPeopleList(1);
+  else if (tabName === 'blocks') loadBlockedIps();
   else if (tabName === 'searches') loadSearches();
   else if (tabName === 'audits') loadAudits();
 }
@@ -1040,8 +1041,15 @@ async function openPersonDrawer(kind, id) {
       .map(([event, count]) => `${event}: ${count}`)
       .join(' · ');
     const ipList = (p.ips || []).length
-      ? p.ips.map((ip) => `<li class="font-mono">${escapeHtml(ip)}</li>`).join('')
-      : '<li class="text-slate-400">No raw IP on stored events</li>';
+      ? p.ips
+          .map(
+            (ip) => `<li class="flex flex-wrap items-center gap-2">
+              <span class="font-mono">${escapeHtml(ip)}</span>
+              <button type="button" class="text-xs font-semibold text-rose-600 hover:underline js-block-ip" data-ip="${escapeHtml(ip)}">Block IP</button>
+            </li>`
+          )
+          .join('')
+      : '<li class="text-slate-400">No raw IP on stored events — cannot block until an IP is known</li>';
     const uaList = (p.userAgents || []).length
       ? p.userAgents.map((ua) => `<li class="break-all">${escapeHtml(ua)}</li>`).join('')
       : '<li class="text-slate-400">—</li>';
@@ -1093,6 +1101,11 @@ async function openPersonDrawer(kind, id) {
         <p><span class="text-slate-500">First / last</span> ${fmtDate(p.firstSeen)} → ${fmtDate(p.lastSeen)}</p>
         <p class="mt-2 text-slate-500">IP addresses</p>
         <ul class="list-disc pl-5 space-y-1">${ipList}</ul>
+        ${
+          (p.ips || []).length > 1
+            ? `<button type="button" class="mt-2 text-xs font-semibold text-rose-700 hover:underline" id="personBlockAllIps">Block all IPs</button>`
+            : ''
+        }
         ${p.events?.some((e) => e.ipInferred) ? '<p class="text-[11px] text-slate-500 mt-1">Some event rows show an inferred IP from matching search history.</p>' : ''}
         <p class="mt-2 text-slate-500">User agents</p>
         <ul class="list-disc pl-5 space-y-1">${uaList}</ul>
@@ -1131,6 +1144,28 @@ async function openPersonDrawer(kind, id) {
       closePersonDrawer();
       openUserDrawer(acc.id);
     });
+    const blockReason = `Blocked from People ${p.anonId || p.userId || ''}`.trim();
+    body.querySelectorAll('.js-block-ip').forEach((btn) => {
+      btn.addEventListener('click', () =>
+        blockVisitorIp(btn.dataset.ip, {
+          reason: blockReason,
+          anonId: p.anonId,
+          userId: p.userId,
+        })
+      );
+    });
+    $('personBlockAllIps')?.addEventListener('click', async () => {
+      if (!confirm('Block every IP listed for this visitor?')) return;
+      for (const ip of p.ips || []) {
+        await blockVisitorIp(ip, {
+          reason: blockReason,
+          anonId: p.anonId,
+          userId: p.userId,
+          silent: true,
+        });
+      }
+      showAlert('Blocked all listed IPs');
+    });
   } catch (err) {
     console.error(err);
     body.innerHTML = `<p class="text-rose-600">${escapeHtml(err.message || 'Failed')}</p>`;
@@ -1139,6 +1174,69 @@ async function openPersonDrawer(kind, id) {
 
 function closePersonDrawer() {
   if ($('personDrawer')) $('personDrawer').style.display = 'none';
+}
+
+async function blockVisitorIp(ip, { reason = '', anonId = null, userId = null, silent = false } = {}) {
+  if (!ip) {
+    showAlert('No IP to block', 'error');
+    return;
+  }
+  if (!silent && !confirm(`Block ${ip}? They will lose API access on both sites.`)) return;
+  const data = await api('/api/admin/blocks', {
+    method: 'POST',
+    body: JSON.stringify({ ip, reason, anonId, userId }),
+  });
+  if (!data.success) {
+    showAlert(data.message || 'Block failed', 'error');
+    return;
+  }
+  if (!silent) showAlert(data.message || 'IP blocked');
+}
+
+async function loadBlockedIps() {
+  try {
+    const data = await api('/api/admin/blocks');
+    if (!data.success) throw new Error(data.message);
+    const tbody = $('blocksTableBody');
+    tbody.innerHTML = '';
+    const rows = data.data.blocks || [];
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="px-3 py-6 text-slate-400">No blocked IPs</td></tr>';
+      return;
+    }
+    rows.forEach((b) => {
+      const tr = document.createElement('tr');
+      tr.className = 'hover:bg-slate-50';
+      const visitor = b.anonId || b.anon_id || b.userId || b.user_id || '—';
+      tr.innerHTML = `
+        <td class="px-3 py-3 font-mono text-xs">${escapeHtml(b.ip)}</td>
+        <td class="px-3 py-3 text-xs">${escapeHtml(b.reason || '—')}</td>
+        <td class="px-3 py-3 font-mono text-[11px] text-slate-500">${escapeHtml(visitor)}</td>
+        <td class="px-3 py-3">${escapeHtml(b.actorLogin || b.actor_login || '—')}</td>
+        <td class="px-3 py-3 text-slate-500 whitespace-nowrap">${fmtDate(b.createdAt || b.created_at)}</td>
+        <td class="px-3 py-3">
+          <button type="button" class="text-indigo-600 hover:underline text-sm js-unblock-ip" data-ip="${escapeHtml(b.ip)}">Unblock</button>
+        </td>`;
+      tbody.appendChild(tr);
+    });
+    tbody.querySelectorAll('.js-unblock-ip').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm(`Unblock ${btn.dataset.ip}?`)) return;
+        const res = await api(`/api/admin/blocks/${encodeURIComponent(btn.dataset.ip)}`, {
+          method: 'DELETE',
+        });
+        if (!res.success) {
+          showAlert(res.message || 'Unblock failed', 'error');
+          return;
+        }
+        showAlert('IP unblocked');
+        loadBlockedIps();
+      });
+    });
+  } catch (err) {
+    console.error(err);
+    showAlert('Failed to load blocked IPs', 'error');
+  }
 }
 
 function closeModal() {
@@ -1236,6 +1334,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') loadPeopleList(1);
   });
   $('peopleBackActivity')?.addEventListener('click', () => switchTab('activity'));
+  $('blockIpBtn')?.addEventListener('click', async () => {
+    const ip = $('blockIpInput')?.value.trim();
+    const reason = $('blockReasonInput')?.value.trim();
+    await blockVisitorIp(ip, { reason });
+    if ($('blockIpInput')) $('blockIpInput').value = '';
+    if ($('blockReasonInput')) $('blockReasonInput').value = '';
+    loadBlockedIps();
+  });
   $('closePersonDrawer')?.addEventListener('click', closePersonDrawer);
   $('personDrawerBackdrop')?.addEventListener('click', closePersonDrawer);
 

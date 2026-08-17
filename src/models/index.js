@@ -6,6 +6,7 @@ import Subscription from './Subscription.js';
 import AdminAuditLog from './AdminAuditLog.js';
 import AnalyticsEvent from './AnalyticsEvent.js';
 import AdminAccount from './AdminAccount.js';
+import BlockedIp from './BlockedIp.js';
 
 // Определяем связи между моделями
 User.hasMany(SearchHistory, { foreignKey: 'userId', as: 'searchHistories' });
@@ -23,6 +24,7 @@ export {
   AdminAuditLog,
   AnalyticsEvent,
   AdminAccount,
+  BlockedIp,
 };
 
 // Синхронизация моделей
@@ -45,5 +47,6 @@ export default {
   AdminAuditLog,
   AnalyticsEvent,
   AdminAccount,
+  BlockedIp,
   syncModels,
 };

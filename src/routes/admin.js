@@ -19,6 +19,7 @@ import {
   listActivityPeople,
   getActivityPerson,
 } from '../controllers/adminActivityController.js';
+import { listBlocks, createBlock, removeBlock } from '../controllers/adminBlockController.js';
 
 const router = express.Router();
 
@@ -60,5 +61,9 @@ router.get('/activity/events', getRecentEvents);
 router.get('/activity/people', listActivityPeople);
 router.get('/activity/people/:kind/:id', getActivityPerson);
 router.get('/activity/users/:userId', getUserActivityTimeline);
+
+router.get('/blocks', listBlocks);
+router.post('/blocks', createBlock);
+router.delete('/blocks/:ip', removeBlock);
 
 export default router; 

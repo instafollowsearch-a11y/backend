@@ -18,6 +18,7 @@ import { stripeWebhook } from './controllers/stripeController.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { notFound } from './middleware/notFound.js';
 import { authLimiter } from './middleware/rateLimiters.js';
+import { ipBlockMiddleware } from './middleware/ipBlockMiddleware.js';
 
 // Import database connection
 import { connectDB } from './config/database.js';
@@ -100,6 +101,8 @@ app.get('/health', (req, res) => {
     version: process.env.npm_package_version || '1.0.0'
   });
 });
+
+app.use(ipBlockMiddleware);
 
 // API routes — auth rate-limited; Instagram search/expensive limits live on those routes
 app.use('/api/auth', authLimiter, authRoutes);

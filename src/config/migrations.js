@@ -267,6 +267,23 @@ const migrations = [
         CREATE INDEX IF NOT EXISTS analytics_events_client_ip_idx ON analytics_events (client_ip);
       `);
     }
+  },
+  {
+    name: '015_blocked_ips',
+    up: async () => {
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS blocked_ips (
+          id SERIAL PRIMARY KEY,
+          ip INET NOT NULL UNIQUE,
+          reason TEXT NULL,
+          anon_id VARCHAR(64) NULL,
+          user_id UUID NULL,
+          actor_login VARCHAR(255) NOT NULL DEFAULT 'admin',
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS blocked_ips_ip_idx ON blocked_ips (ip);
+      `);
+    }
   }
 ];
 

@@ -70,6 +70,7 @@
                 <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="subscriptions">Access</button>
                 <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="activity">Activity</button>
                 <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="people">People</button>
+                <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="blocks">Blocked</button>
                 <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="searches">Searches</button>
                 <button class="tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-white" data-tab="audits">Audit log</button>
             </nav>
@@ -314,6 +315,40 @@
                 </div>
             </section>
 
+            <!-- Blocked IPs -->
+            <section id="blocksTab" class="tab-content" style="display:none;">
+                <div class="bg-white border border-slate-200 rounded-2xl p-5">
+                    <div class="flex flex-col lg:flex-row gap-3 mb-4 items-end justify-between">
+                        <div>
+                            <h2 class="font-semibold text-lg">Blocked IPs</h2>
+                            <p class="text-sm text-slate-500">Blocked addresses cannot use search, stories, login, or checkout. Admin stays available.</p>
+                        </div>
+                        <div class="flex flex-wrap gap-2 w-full lg:w-auto">
+                            <input id="blockIpInput" type="text" placeholder="IPv4 or IPv6"
+                                autocomplete="off" class="flex-1 lg:w-56 px-3 py-2 border border-slate-300 rounded-xl">
+                            <input id="blockReasonInput" type="text" placeholder="Reason (optional)"
+                                autocomplete="off" class="flex-1 lg:w-56 px-3 py-2 border border-slate-300 rounded-xl">
+                            <button type="button" id="blockIpBtn" class="px-4 py-2 bg-rose-600 text-white rounded-xl">Block IP</button>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-sm">
+                            <thead class="bg-slate-50 text-slate-500 uppercase text-xs">
+                                <tr>
+                                    <th class="px-3 py-3 text-left">IP</th>
+                                    <th class="px-3 py-3 text-left">Reason</th>
+                                    <th class="px-3 py-3 text-left">Visitor</th>
+                                    <th class="px-3 py-3 text-left">By</th>
+                                    <th class="px-3 py-3 text-left">When</th>
+                                    <th class="px-3 py-3 text-left"></th>
+                                </tr>
+                            </thead>
+                            <tbody id="blocksTableBody" class="divide-y divide-slate-100"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
             <!-- Searches -->
             <section id="searchesTab" class="tab-content" style="display:none;">
                 <div class="bg-white border border-slate-200 rounded-2xl p-5">
@@ -363,6 +398,8 @@
                             <option value="update_access">update_access</option>
                             <option value="role_update">role_update</option>
                             <option value="user_delete">user_delete</option>
+                            <option value="block_ip">block_ip</option>
+                            <option value="unblock_ip">unblock_ip</option>
                             <option value="admin_password_change">admin_password_change</option>
                         </select>
                     </div>
@@ -552,6 +589,6 @@
         </div>
     </div>
 
-    <script src="/admin.js?v=20260817d"></script>
+    <script src="/admin.js?v=20260817e"></script>
 </body>
 </html>
