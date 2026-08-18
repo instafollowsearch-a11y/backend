@@ -935,8 +935,6 @@ export const getActivityPerson = async (req, res) => {
   }
 };
 
-const SEARCH_FEED_EVENTS = ['search', 'story_viewer', 'story_viewer_search'];
-
 /**
  * GET /api/admin/searches — both sites, with who / URL / IP.
  */
@@ -946,23 +944,44 @@ export const listAdminSearches = async (req, res) => {
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 25, 1), 100);
     const q = String(req.query.search || '').trim();
     const offset = (page - 1) * limit;
-    const where = {
-      event: { [Op.in]: SEARCH_FEED_EVENTS },
-    };
-    if (q) {
-      where[Op.and] = [
-        sequelize.where(literal(`COALESCE(props->>'username','')`), {
-          [Op.iLike]: `%${q.replace(/[%_]/g, '\\$&')}%`,
-        }),
-      ];
-    }
-    const { count, rows } = await AnalyticsEvent.findAndCountAll({
-      where,
-      order: [['ts', 'DESC']],
+    const replacements = {
+      qLike: q ? `%${q.replace(/%/g, '\\%').replace(/_/g, '\\_')}%` : null,
       limit,
       offset,
-    });
-    const decorated = rows.map(decorateEvent);
+    };
+    const filterSql = q
+      ? `AND COALESCE(props->>'username','') ILIKE :qLike`
+      : '';
+    const [countRows, rawRows] = await Promise.all([
+      sequelize.query(
+        `SELECT COUNT(*)::int AS cnt
+         FROM analytics_events
+         WHERE event IN ('search','story_viewer','story_viewer_search')
+         ${filterSql}`,
+        { replacements, type: QueryTypes.SELECT }
+      ),
+      sequelize.query(
+        `SELECT id, event, path, user_id, anon_id, props,
+                client_ip::text AS client_ip, user_agent, request_origin,
+                country, region, city, ts
+         FROM analytics_events
+         WHERE event IN ('search','story_viewer','story_viewer_search')
+         ${filterSql}
+         ORDER BY ts DESC
+         LIMIT :limit OFFSET :offset`,
+        { replacements, type: QueryTypes.SELECT }
+      ),
+    ]);
+    const decorated = rawRows.map((row) =>
+      decorateEvent({
+        ...row,
+        userId: row.user_id,
+        anonId: row.anon_id,
+        clientIp: row.client_ip,
+        userAgent: row.user_agent,
+        requestOrigin: row.request_origin,
+      })
+    );
     const names = [
       ...new Set(
         decorated
@@ -972,12 +991,16 @@ export const listAdminSearches = async (req, res) => {
     ];
     let historyRows = [];
     if (names.length) {
-      historyRows = await SearchHistory.findAll({
-        where: { targetUsername: { [Op.in]: names } },
-        order: [['createdAt', 'DESC']],
-        limit: 400,
-        attributes: ['targetUsername', 'ipAddress', 'userAgent', 'createdAt', 'searchType'],
-      });
+      try {
+        historyRows = await SearchHistory.findAll({
+          where: { targetUsername: { [Op.in]: names } },
+          order: [['created_at', 'DESC']],
+          limit: 400,
+          attributes: ['targetUsername', 'ipAddress', 'userAgent', 'createdAt', 'searchType'],
+        });
+      } catch (histErr) {
+        console.warn('listAdminSearches history fill:', histErr.message);
+      }
     }
     const fillIp = (event) => {
       if (event.clientIp) return event.clientIp;
@@ -990,19 +1013,24 @@ export const listAdminSearches = async (req, res) => {
       return ipToString(hit?.ipAddress) || null;
     };
     const userIds = [...new Set(decorated.map((e) => e.userId).filter(Boolean))];
-    const users = userIds.length
-      ? await User.findAll({
+    let userMap = {};
+    if (userIds.length) {
+      try {
+        const users = await User.findAll({
           where: { id: { [Op.in]: userIds } },
           attributes: ['id', 'username', 'email'],
-        })
-      : [];
-    const userMap = Object.fromEntries(users.map((u) => [u.id, u.toJSON()]));
+        });
+        userMap = Object.fromEntries(users.map((u) => [String(u.id), u.toJSON()]));
+      } catch (userErr) {
+        console.warn('listAdminSearches users:', userErr.message);
+      }
+    }
     const searches = decorated.map((e) => {
       const ip = fillIp(e);
       const isStory = e.event === 'story_viewer' || e.event === 'story_viewer_search';
-      const account = e.userId ? userMap[e.userId] || null : null;
+      const account = e.userId ? userMap[String(e.userId)] || null : null;
       return {
-        id: e.id,
+        id: String(e.id),
         ts: e.ts,
         event: e.event,
         targetUsername: e.props?.username || null,
@@ -1020,15 +1048,16 @@ export const listAdminSearches = async (req, res) => {
         isBot: Boolean(e.props?.isBot),
       };
     });
+    const total = Number(countRows?.[0]?.cnt || 0);
     return res.json({
       success: true,
       data: {
         searches,
         pagination: {
           currentPage: page,
-          totalPages: Math.ceil(count / limit) || 1,
-          total: count,
-          totalItems: count,
+          totalPages: Math.max(1, Math.ceil(total / limit)),
+          total,
+          totalItems: total,
           limit,
         },
       },
@@ -1037,7 +1066,7 @@ export const listAdminSearches = async (req, res) => {
     console.error('listAdminSearches error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Failed to load searches',
+      message: error.message || 'Failed to load searches',
     });
   }
 };

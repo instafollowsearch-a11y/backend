@@ -746,7 +746,7 @@ async function loadSearches(page = 1) {
     let url = `/api/admin/searches?page=${page}&limit=25`;
     if (q) url += `&search=${encodeURIComponent(q)}`;
     const data = await api(url);
-    if (!data.success) throw new Error(data.message);
+    if (!data.success) throw new Error(data.message || 'Failed to load searches');
     const tbody = $('searchesTableBody');
     tbody.innerHTML = '';
     data.data.searches.forEach((s) => {
@@ -798,8 +798,9 @@ async function loadSearches(page = 1) {
       });
     });
     displayPagination(data.data.pagination, 'searchesPagination', loadSearches);
-  } catch {
-    showAlert('Failed to load searches', 'error');
+  } catch (err) {
+    console.error(err);
+    showAlert(err.message || 'Failed to load searches', 'error');
   }
 }
 
