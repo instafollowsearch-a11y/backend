@@ -11,7 +11,7 @@ import {
 } from '../services/stripeService.js';
 import { resolvePlanFromPriceId } from '../services/stripePriceConfig.js';
 import { resolveUserEntitlement } from '../services/entitlementService.js';
-import { emitAnalyticsEvent } from '../services/productAnalyticsService.js';
+import { emitReqAnalyticsEvent } from '../services/productAnalyticsService.js';
 
 export const createPaymentSession = async (req, res) => {
   try {
@@ -48,7 +48,7 @@ export const createPaymentSession = async (req, res) => {
       user.id
     );
 
-    void emitAnalyticsEvent({
+    void emitReqAnalyticsEvent(req, {
       event: 'checkout_started',
       path: '/pricing',
       site: 'main',

@@ -8,7 +8,7 @@ import {
   getStoryViewerCacheTtlMs,
 } from '../services/utils/storyViewerCache.js';
 import { getPostComentsWithCap, getPostLikers, getUserInfo } from '../services/utils/hikerHelperFunctions.js';
-import { emitAnalyticsEvent } from '../services/productAnalyticsService.js';
+import { emitReqAnalyticsEvent } from '../services/productAnalyticsService.js';
 import { getClientIp, getCfCountry } from '../services/geoLookup.js';
 
 // Search for recent followers/following - RANDOM DATA for motivation
@@ -24,7 +24,7 @@ export const searchRecent = async (req, res, next) => {
 
     const { username, type = 'both' } = req.body;
     const userId = req.user?.id;
-    const ipAddress = req.ip || req.connection.remoteAddress;
+    const ipAddress = getClientIp(req) || req.ip || req.connection.remoteAddress;
 
     // Create search history entry
     const searchEntry = await SearchHistory.create({
@@ -36,7 +36,7 @@ export const searchRecent = async (req, res, next) => {
       status: 'pending'
     });
 
-    void emitAnalyticsEvent({
+    void emitReqAnalyticsEvent(req, {
       event: 'search',
       path: '/search',
       site: 'main',
@@ -343,7 +343,7 @@ export const advancedSearch = async (req, res, next) => {
       userId: req.user.id,
       targetUsername: username,
       searchType: type,
-      ipAddress: req.ip || req.connection.remoteAddress,
+      ipAddress: getClientIp(req) || req.ip || req.connection.remoteAddress,
       userAgent: req.get('User-Agent'),
       status: 'completed',
       newFollowers: results.newFollowers,
@@ -456,11 +456,10 @@ export const sharedActivity = async (req, res, next) => {
     const results = await getSharedActivity(username1, username2);
     const processingTime = Date.now() - startTime;
 
-    void emitAnalyticsEvent({
+    void emitReqAnalyticsEvent(req, {
       event: 'shared_activity',
       path: '/shared-activity',
       site: 'main',
-      userId: req.user?.id || null,
       props: { username1, username2 },
     });
 
@@ -525,11 +524,10 @@ export const getAdmirers = async (req, res, next) => {
     const results = await getInstagramAdmirers(username);
     const processingTime = Date.now() - startTime;
 
-    void emitAnalyticsEvent({
+    void emitReqAnalyticsEvent(req, {
       event: 'admirers',
       path: '/admirers',
       site: 'main',
-      userId: req.user?.id || null,
       props: { username },
     });
 
@@ -590,7 +588,7 @@ export const getStoryViewer = async (req, res, next) => {
     const normalized = username.trim().replace(/^@+/, '');
 
     const emitStoryVisit = () => {
-      void emitAnalyticsEvent({
+      void emitReqAnalyticsEvent(req, {
         event: 'story_viewer',
         path: '/story-viewer',
         site: 'story_viewer',
@@ -683,11 +681,10 @@ export const getInstagramProfile = async (req, res, next) => {
     const results = await getInstagramProfileDetails(username, { forPremium });
     const processingTime = Date.now() - startTime;
 
-    void emitAnalyticsEvent({
+    void emitReqAnalyticsEvent(req, {
       event: 'view_profile',
       path: '/view-profile',
       site: 'main',
-      userId: req.user?.id || null,
       props: { username },
     });
 

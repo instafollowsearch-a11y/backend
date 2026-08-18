@@ -88,13 +88,14 @@ const countryLabel = (code) => {
  * Stable anonymous id from IP (hashed). Admin also stores raw IP on events.
  */
 export const anonIdFromIp = (ip) => {
-  if (!ip || isPrivateIp(ip)) return null;
+  const clean = sanitizeClientIp(ip);
+  if (!clean) return null;
   const salt = process.env.ANON_IP_SALT || 'instafollowcheck-anon';
   const digest = createHash('sha256')
-    .update(`${salt}|${ip}`)
+    .update(`${salt}|${clean}`)
     .digest('hex')
     .slice(0, 24);
-  return `ip_${digest}`;
+  return `${isPrivateIp(clean) ? 'priv_' : 'ip_'}${digest}`;
 };
 
 let cityReader = null;

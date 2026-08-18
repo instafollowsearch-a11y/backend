@@ -1,6 +1,12 @@
 import AnalyticsEvent from '../models/AnalyticsEvent.js';
 import { classifyClient } from './clientKind.js';
-import { anonIdFromIp, lookupGeoFromIp, sanitizeClientIp } from './geoLookup.js';
+import {
+  anonIdFromIp,
+  getCfCountry,
+  getClientIp,
+  lookupGeoFromIp,
+  sanitizeClientIp,
+} from './geoLookup.js';
 import {
   referrerHostOf,
   resolveTrafficSource,
@@ -82,8 +88,52 @@ const withTrafficProps = (props, { utmSource, utmMedium, referrer }) => {
   };
 };
 
+const resolveIdentity = ({ anonId = null, clientIp = null } = {}) => {
+  const storedIp = sanitizeClientIp(clientIp);
+  const fromClient = anonId ? String(anonId).slice(0, 64) : '';
+  const fromIp = anonIdFromIp(storedIp);
+  const resolvedAnon = fromClient || fromIp || 'anon_none';
+  return { storedIp, resolvedAnon };
+};
+
 /**
- * Persist one analytics event (best-effort).
+ * IP, UA, origin, and ids from an Express request (all product emits).
+ */
+export const analyticsContextFromReq = (req) => {
+  const body = req?.body && typeof req.body === 'object' ? req.body : {};
+  return {
+    userId: req?.user?.id || null,
+    anonId: body.anonId || body.anon_id || null,
+    clientIp: getClientIp(req) || req?.ip || null,
+    userAgent: req?.headers?.['user-agent'] || null,
+    origin: req?.headers?.origin || req?.headers?.referer || null,
+    cfCountry: getCfCountry(req),
+    referrer: body.referrer || req?.headers?.referer || null,
+    utmSource: body.utmSource || body.utm_source || null,
+    utmMedium: body.utmMedium || body.utm_medium || null,
+    utmCampaign: body.utmCampaign || body.utm_campaign || null,
+  };
+};
+
+/**
+ * Emit an analytics event and always attach request identity.
+ */
+export const emitReqAnalyticsEvent = (req, fields = {}) => {
+  const ctx = analyticsContextFromReq(req);
+  return emitAnalyticsEvent({
+    ...ctx,
+    ...fields,
+    userId: fields.userId !== undefined ? fields.userId : ctx.userId,
+    anonId: fields.anonId !== undefined ? fields.anonId : ctx.anonId,
+    clientIp: fields.clientIp !== undefined ? fields.clientIp : ctx.clientIp,
+    userAgent: fields.userAgent !== undefined ? fields.userAgent : ctx.userAgent,
+    origin: fields.origin !== undefined ? fields.origin : ctx.origin,
+    referrer: fields.referrer !== undefined ? fields.referrer : ctx.referrer,
+  });
+};
+
+/**
+ * Persist one analytics event (best-effort). Always stores IP + anon/user id.
  */
 export const emitAnalyticsEvent = async ({
   event,
@@ -109,9 +159,10 @@ export const emitAnalyticsEvent = async ({
       path,
       props: { ...props, site: site || props.site },
     });
+    const { storedIp, resolvedAnon } = resolveIdentity({ anonId, clientIp });
     const kind = classifyClient({
       userAgent,
-      anonId,
+      anonId: resolvedAnon,
       referrer,
       origin,
     });
@@ -127,9 +178,7 @@ export const emitAnalyticsEvent = async ({
       },
       { utmSource, utmMedium, referrer }
     );
-    const geo = lookupGeoFromIp(clientIp, { cfCountry });
-    const resolvedAnon = anonId || anonIdFromIp(clientIp);
-    const storedIp = sanitizeClientIp(clientIp);
+    const geo = lookupGeoFromIp(storedIp || clientIp, { cfCountry });
     const storedUa = kind.ua;
     const storedOrigin = origin ? String(origin).slice(0, 512) : null;
     return await AnalyticsEvent.create({
@@ -184,14 +233,16 @@ export const ingestAnalyticsEvents = async (
     const utmMedium = raw.utmMedium || raw.utm_medium || null;
     const utmCampaign = raw.utmCampaign || raw.utm_campaign || null;
     const referrer = raw.referrer || baseProps.referrer || null;
-    const resolvedAnon = raw.anonId || anonIdFromIp(clientIp);
+    const { storedIp, resolvedAnon } = resolveIdentity({
+      anonId: raw.anonId || raw.anon_id || null,
+      clientIp,
+    });
     const kind = classifyClient({
       userAgent,
-      anonId: raw.anonId || null,
+      anonId: raw.anonId || resolvedAnon,
       referrer,
       origin,
     });
-    const storedIp = sanitizeClientIp(clientIp);
     const storedOrigin = origin ? String(origin).slice(0, 512) : null;
     rows.push({
       event: raw.event,
