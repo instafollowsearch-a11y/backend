@@ -752,14 +752,50 @@ async function loadSearches(page = 1) {
     data.data.searches.forEach((s) => {
       const tr = document.createElement('tr');
       tr.className = 'hover:bg-slate-50';
+      const ip = String(s.clientIp || s.ipAddress || s.ip_address || '')
+        .replace(/\/\d+$/, '');
+      const anonId = s.anonId || s.anon_id || '';
+      const userId = s.userId || s.user_id || s.account?.id || '';
+      const whoLabel = s.account
+        ? `@${s.account.username}`
+        : anonId || 'unidentified';
+      const personKind = userId ? 'u' : anonId ? 'a' : '';
+      const personId = userId || anonId;
+      const whoCell = personKind
+        ? `<button type="button" class="text-indigo-600 hover:underline font-mono text-xs js-open-person" data-kind="${personKind}" data-id="${escapeHtml(personId)}">${escapeHtml(whoLabel)}</button>`
+        : `<span class="text-slate-400">${escapeHtml(whoLabel)}</span>`;
+      const url = s.url || '';
+      const target = s.targetUsername || s.target_username || '—';
+      const blockBtn = ip
+        ? `<button type="button" class="text-rose-600 hover:underline text-sm js-block-person" data-ip="${escapeHtml(ip)}" data-anon="${escapeHtml(anonId)}" data-user="${escapeHtml(userId)}">Block</button>`
+        : `<span class="text-slate-400 text-xs">No IP</span>`;
       tr.innerHTML = `
-        <td class="px-3 py-3 text-slate-500 whitespace-nowrap">${fmtDate(s.created_at || s.createdAt)}</td>
-        <td class="px-3 py-3 font-medium">@${escapeHtml(s.targetUsername || s.target_username)}</td>
+        <td class="px-3 py-3 text-slate-500 whitespace-nowrap">${fmtDate(s.ts || s.created_at || s.createdAt)}</td>
+        <td class="px-3 py-3 font-medium">@${escapeHtml(target)}</td>
         <td class="px-3 py-3">${badge(s.searchType || s.search_type || '—')}</td>
-        <td class="px-3 py-3">${s.user ? `@${escapeHtml(s.user.username)}` : '<span class="text-slate-400">anonymous</span>'}</td>
-        <td class="px-3 py-3">${badge(s.status || '—', s.status === 'completed' ? 'green' : 'amber')}</td>
-        <td class="px-3 py-3 font-mono text-xs">${escapeHtml(s.ipAddress || s.ip_address || '—')}</td>`;
+        <td class="px-3 py-3 text-xs">${escapeHtml(s.site || '—')}</td>
+        <td class="px-3 py-3 text-xs max-w-[220px]">
+          ${
+            url
+              ? `<a class="text-indigo-600 hover:underline break-all" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`
+              : '—'
+          }
+        </td>
+        <td class="px-3 py-3">${whoCell}</td>
+        <td class="px-3 py-3 font-mono text-xs">${escapeHtml(ip || '—')}</td>
+        <td class="px-3 py-3 whitespace-nowrap">${blockBtn}</td>`;
       tbody.appendChild(tr);
+    });
+    bindPersonLinks(tbody);
+    tbody.querySelectorAll('.js-block-person').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const ok = await blockVisitorIp(btn.dataset.ip, {
+          reason: `Blocked from Searches ${btn.dataset.anon || btn.dataset.user || ''}`.trim(),
+          anonId: btn.dataset.anon || null,
+          userId: btn.dataset.user || null,
+        });
+        if (ok) loadSearches(page);
+      });
     });
     displayPagination(data.data.pagination, 'searchesPagination', loadSearches);
   } catch {

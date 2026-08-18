@@ -8,7 +8,6 @@ import {
   getUserStats,
   manageUserSubscription,
   getAllSubscriptions,
-  getSearchHistoryAdmin,
   getAuditLogs,
   changePassword,
 } from '../controllers/adminController.js';
@@ -18,6 +17,7 @@ import {
   getRecentEvents,
   listActivityPeople,
   getActivityPerson,
+  listAdminSearches,
 } from '../controllers/adminActivityController.js';
 import { listBlocks, createBlock, removeBlock } from '../controllers/adminBlockController.js';
 
@@ -52,7 +52,7 @@ router.get('/subscriptions', getAllSubscriptions);
 router.post('/users/:userId/subscription', manageUserSubscription);
 
 // Product usage
-router.get('/searches', getSearchHistoryAdmin);
+router.get('/searches', listAdminSearches);
 router.get('/audits', getAuditLogs);
 
 // First-party activity dashboard

@@ -934,3 +934,110 @@ export const getActivityPerson = async (req, res) => {
     });
   }
 };
+
+const SEARCH_FEED_EVENTS = ['search', 'story_viewer', 'story_viewer_search'];
+
+/**
+ * GET /api/admin/searches — both sites, with who / URL / IP.
+ */
+export const listAdminSearches = async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 25, 1), 100);
+    const q = String(req.query.search || '').trim();
+    const offset = (page - 1) * limit;
+    const where = {
+      event: { [Op.in]: SEARCH_FEED_EVENTS },
+    };
+    if (q) {
+      where[Op.and] = [
+        sequelize.where(literal(`COALESCE(props->>'username','')`), {
+          [Op.iLike]: `%${q.replace(/[%_]/g, '\\$&')}%`,
+        }),
+      ];
+    }
+    const { count, rows } = await AnalyticsEvent.findAndCountAll({
+      where,
+      order: [['ts', 'DESC']],
+      limit,
+      offset,
+    });
+    const decorated = rows.map(decorateEvent);
+    const names = [
+      ...new Set(
+        decorated
+          .filter((e) => !e.clientIp && e.props?.username)
+          .map((e) => String(e.props.username))
+      ),
+    ];
+    let historyRows = [];
+    if (names.length) {
+      historyRows = await SearchHistory.findAll({
+        where: { targetUsername: { [Op.in]: names } },
+        order: [['createdAt', 'DESC']],
+        limit: 400,
+        attributes: ['targetUsername', 'ipAddress', 'userAgent', 'createdAt', 'searchType'],
+      });
+    }
+    const fillIp = (event) => {
+      if (event.clientIp) return event.clientIp;
+      const uname = String(event.props?.username || '');
+      const ts = new Date(event.ts).getTime();
+      const hit = historyRows.find((h) => {
+        if (String(h.targetUsername) !== uname) return false;
+        return Math.abs(new Date(h.createdAt).getTime() - ts) < 8000;
+      });
+      return ipToString(hit?.ipAddress) || null;
+    };
+    const userIds = [...new Set(decorated.map((e) => e.userId).filter(Boolean))];
+    const users = userIds.length
+      ? await User.findAll({
+          where: { id: { [Op.in]: userIds } },
+          attributes: ['id', 'username', 'email'],
+        })
+      : [];
+    const userMap = Object.fromEntries(users.map((u) => [u.id, u.toJSON()]));
+    const searches = decorated.map((e) => {
+      const ip = fillIp(e);
+      const isStory = e.event === 'story_viewer' || e.event === 'story_viewer_search';
+      const account = e.userId ? userMap[e.userId] || null : null;
+      return {
+        id: e.id,
+        ts: e.ts,
+        event: e.event,
+        targetUsername: e.props?.username || null,
+        searchType: isStory ? 'stories' : e.props?.type || 'both',
+        site: e.site,
+        siteKey: e.siteKey,
+        url: e.url,
+        userId: e.userId || null,
+        anonId: e.anonId || e.anon_id || null,
+        account,
+        clientIp: ip,
+        userAgent: e.userAgent || null,
+        requestOrigin: e.requestOrigin || null,
+        clientKind: e.props?.clientKind || null,
+        isBot: Boolean(e.props?.isBot),
+      };
+    });
+    return res.json({
+      success: true,
+      data: {
+        searches,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(count / limit) || 1,
+          total: count,
+          totalItems: count,
+          limit,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('listAdminSearches error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to load searches',
+    });
+  }
+};
