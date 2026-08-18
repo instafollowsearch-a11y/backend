@@ -57,6 +57,15 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+function formatSearchType(raw) {
+  const key = String(raw || '').toLowerCase();
+  if (key === 'both') return 'Followers + following';
+  if (key === 'followers') return 'Followers';
+  if (key === 'following') return 'Following';
+  if (key === 'stories') return 'Stories';
+  return raw || '—';
+}
+
 function badge(text, tone = 'slate') {
   const tones = {
     slate: 'bg-slate-100 text-slate-700',
@@ -772,7 +781,7 @@ async function loadSearches(page = 1) {
       tr.innerHTML = `
         <td class="px-3 py-3 text-slate-500 whitespace-nowrap">${fmtDate(s.ts || s.created_at || s.createdAt)}</td>
         <td class="px-3 py-3 font-medium">@${escapeHtml(target)}</td>
-        <td class="px-3 py-3">${badge(s.searchType || s.search_type || '—')}</td>
+        <td class="px-3 py-3">${badge(formatSearchType(s.searchType || s.search_type))}</td>
         <td class="px-3 py-3 text-xs">${escapeHtml(s.site || '—')}</td>
         <td class="px-3 py-3 text-xs max-w-[220px]">
           ${
@@ -907,7 +916,7 @@ async function openUserDrawer(userId) {
         <ul class="space-y-1 text-xs">
           ${searches
             .slice(0, 8)
-            .map((s) => `<li>@${escapeHtml(s.targetUsername)} · ${escapeHtml(s.searchType)} · ${fmtDate(s.created_at || s.createdAt)}</li>`)
+            .map((s) => `<li>@${escapeHtml(s.targetUsername)} · ${escapeHtml(formatSearchType(s.searchType))} · ${fmtDate(s.created_at || s.createdAt)}</li>`)
             .join('') || '<li class="text-slate-400">—</li>'}
         </ul>
       </div>
