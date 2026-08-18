@@ -253,25 +253,65 @@ function switchTab(tabName) {
   else if (tabName === 'audits') loadAudits();
 }
 
+function compactPageList(current, total) {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const keep = new Set([1, 2, total - 1, total, current, current - 1, current + 1]);
+  const nums = [...keep].filter((p) => p >= 1 && p <= total).sort((a, b) => a - b);
+  const out = [];
+  let prev = 0;
+  nums.forEach((p) => {
+    if (prev && p - prev > 1) out.push('…');
+    out.push(p);
+    prev = p;
+  });
+  return out;
+}
+
 function displayPagination(pagination, containerId, loadFn) {
   const container = $(containerId);
   if (!container || !pagination) return;
   container.innerHTML = '';
-  if (pagination.totalPages <= 1) return;
+  const totalPages = Number(pagination.totalPages || 0);
+  const current = Number(pagination.currentPage || 1);
+  const total = Number(pagination.totalItems ?? pagination.total ?? 0);
+  const limit = Number(pagination.limit || 25);
+  if (totalPages <= 1 && total <= limit) return;
+  const start = total === 0 ? 0 : (current - 1) * limit + 1;
+  const end = Math.min(current * limit, total);
   const wrap = document.createElement('div');
-  wrap.className = 'flex gap-2 flex-wrap justify-center';
-  for (let i = 1; i <= pagination.totalPages; i++) {
+  wrap.className = 'flex items-center justify-center gap-3 flex-wrap';
+  const info = document.createElement('p');
+  info.className = 'text-sm text-slate-500';
+  info.textContent = total ? `${start}–${end} of ${total}` : '';
+  wrap.appendChild(info);
+  if (totalPages <= 1) {
+    container.appendChild(wrap);
+    return;
+  }
+  const nav = document.createElement('div');
+  nav.className = 'flex items-center gap-1';
+  const addBtn = (label, page, opts = {}) => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.textContent = String(i);
-    btn.className =
-      'px-3 py-1 rounded-lg border text-sm ' +
-      (i === pagination.currentPage
-        ? 'bg-blue-600 text-white border-blue-600'
-        : 'bg-white border-slate-300 hover:bg-slate-50');
-    btn.addEventListener('click', () => loadFn(i));
-    wrap.appendChild(btn);
-  }
+    btn.textContent = label;
+    const isCurrent = Boolean(opts.current);
+    const disabled = Boolean(opts.disabled || opts.ellipsis);
+    btn.disabled = disabled;
+    btn.className = isCurrent
+      ? 'min-w-[2rem] px-2.5 py-1 rounded-lg border text-sm bg-blue-600 text-white border-blue-600'
+      : disabled
+        ? 'min-w-[2rem] px-2.5 py-1 rounded-lg border text-sm text-slate-400 border-slate-200 cursor-default'
+        : 'min-w-[2rem] px-2.5 py-1 rounded-lg border text-sm bg-white border-slate-300 hover:bg-slate-50';
+    if (!disabled && page) btn.addEventListener('click', () => loadFn(page));
+    nav.appendChild(btn);
+  };
+  addBtn('Prev', current - 1, { disabled: current <= 1 });
+  compactPageList(current, totalPages).forEach((item) => {
+    if (item === '…') addBtn('…', null, { ellipsis: true });
+    else addBtn(String(item), item, { current: item === current });
+  });
+  addBtn('Next', current + 1, { disabled: current >= totalPages });
+  wrap.appendChild(nav);
   container.appendChild(wrap);
 }
 
